@@ -4,6 +4,19 @@
 
 ## 版本
 
+### v1.12.0
+- **直播画面内嵌到壳内播放区，不再弹出 mpv 独立窗口**：改用 mpv 的 `--wid=<HWND>` 把视频窗口挂成 Electron 原生子窗口，承载窗口尺寸/位置与播放区实时对齐（跟随主窗口移动、缩放、最大化）。实现要点：
+  - **承载窗口必须 `transparent: true` 且绝不能 `loadURL`**。一旦加载任何页面，Chromium 会在承载窗口里创建 `Chrome_RenderWidgetHostHWND` 渲染层，它会盖住 mpv 的原生子窗口 → 播放区全黑。用 4 变体并行对照（A 普通 / B 透明+about:blank / C 透明+不加载 / D 离屏）实测确认：**只有「透明 + 不加载任何 URL」能让 mpv 视频窗口直接可见**。
+  - **坐标系修正**：`getBoundingClientRect()` 返回的是相对**客户区**的 CSS 像素，而窗口坐标原点在边框左上角 —— 原用 `getBounds()` 导致整体偏移一个标题栏（实测 x=8 / y=31），改为 `getContentBounds()` 后画面精确贴合播放区。
+  - **鼠标穿透**：承载窗口 `setIgnoreMouseEvents(true, {forward:true})`，点击落到主窗口渲染层，再通过 mpv IPC 管道（`--input-ipc-server`）转发 `pause` / `fullscreen` 等命令，单击暂停、双击全屏照常可用。
+  - **状态条移到播放区外**：原生承载窗口会盖住播放区内所有 DOM，因此播放状态提示改放到区外一行（「▶ 播放中 · mpv 硬解内嵌」/「⏸ 已暂停」），暂停瞬间的画面文字提示交给 mpv 自己的 OSD（`show-text`）。
+  - **状态双向同步**：壳内每 1.5s 通过 IPC `get_property` 读 mpv 的真实 `fullscreen` / `pause`，用户按 ESC 退全屏后状态条立刻跟着变，不会误导。
+  - **键位自定义**：改用 `--input-conf` 保留 mpv 内置键位（ESC 退出全屏、空格暂停），同时禁掉 `q`/`Q` 直接退出进程（避免误关整条直播），并让 `MBTN_LEFT_DBL` 切换全屏。
+- **硬解与格式支持不变**：仍走 mpv `--hwdec=auto-safe --vo=gpu`（实测 d3d11va 硬解生效），FLV / TS 等 Chromium 解不了的格式照常可播；VLC / PotPlayer 不支持 `--wid`，自动回退到独立窗口。
+- **单实例与退出清理**：切台/换线先关掉旧的承载窗口与 mpv 进程（`taskkill /T /F`），退出应用不残留后台声音。
+- **排障能力**：mpv 每次启动写一份带时间戳的日志（`%TEMP%\MediaShell\mpv-embed-*.log`，只保留最近 5 份）+ 参数摘要（`mpv-embed-index.log`）；新增 `live-embed-info` 接口可查承载窗口句柄与位置。注意日志必须落纯 ASCII 路径 —— mpv 用 ANSI 文件 API，路径含中文会静默失败。
+- `smoke_test.js` 新增 5 个内嵌播放用例（播放区几何采集 / 状态条 / OSD 反馈 / 双击全屏恢复播放），共 **31/31** 通过。
+
 ### v1.9.5
 - **修复选线算法**：`pickBestLine` 原纯按响应速度排序，导致 sites=1 的空壳垂直线路（短剧/课堂/赛事，体积小、CDN 命中快 ~180ms）总比主线路（~280ms）快而被选中 → 站点列表几乎为空、直播源指向失效的 `PlatformLive.txt`/旧 TXT → 表现为「多仓解析混乱 + 直播无法播放」。改为**质量优先**：站点数降序 → 有效直播源（非 PlatformLive 的 m3u/txt）降序 → 速度升序。实测连续 3 轮稳定选中 sites=107 的摸鱼儿主线路。
 - `smoke_test.js` 测试框架改为串行（共享 mock 不再互相覆盖），新增 2 个选线用例，共 **17/17**。
@@ -39,7 +52,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.9.5**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.12.0**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
