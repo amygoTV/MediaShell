@@ -4,6 +4,9 @@
 
 ## 版本
 
+### v1.9.4
+- **修复 M3U 直播源同名频道拆成多条**：订阅直播源现为 `TVLives_v2.m3u`，一个 `#EXTINF` 后跟多条 URL（同频道多线路）。原 `parseM3U` 每遇一条 URL 就新建一个 item，导致 CCTV-1 变成 4 个同名频道、左下角无法切换线路、超时切流失效。重写 `parseM3U`：连续 URL 归到同一频道的多线路、按 `group-title` 分组（央视/卫视/港澳台/影视轮播/体育）、容错上游字节截断造成的畸形组名。实测 187 频道/389 线路/5 组，同名频道合并恢复正常，左下角切线和超时自动换线恢复生效。
+
 ### v1.9.3
 - **支持影视仓多级索引订阅**：导入 `zheteng.json` 等主索引不再报「配置中没有 sites」。影视仓配置是三级结构（`storeHouse` 多仓 → `urls` 多线路 → 末级 `api.json` 含 sites），原壳只认顶层 sites。新增 `expandSubscription()` 逐级展开：多仓取首个可达仓库、多线路并发测速选最快可用线路（避免合并 500+ 站拖垮启动测速），末级直接返回。展开只在导入时做一次并持久化，启动读缓存不影响。实测三级索引 656ms 完成展开选线。
 
@@ -32,7 +35,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.9.3**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.9.4**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
