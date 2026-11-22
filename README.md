@@ -4,6 +4,9 @@
 
 ## 版本
 
+### v1.9.3
+- **支持影视仓多级索引订阅**：导入 `zheteng.json` 等主索引不再报「配置中没有 sites」。影视仓配置是三级结构（`storeHouse` 多仓 → `urls` 多线路 → 末级 `api.json` 含 sites），原壳只认顶层 sites。新增 `expandSubscription()` 逐级展开：多仓取首个可达仓库、多线路并发测速选最快可用线路（避免合并 500+ 站拖垮启动测速），末级直接返回。展开只在导入时做一次并持久化，启动读缓存不影响。实测三级索引 656ms 完成展开选线。
+
 ### v1.9.2
 - **修复便携版外壳 exe 没图标**：真根因是 `signAndEditExecutable:false` 让 electron-builder 跳过了对自解压外壳的图标注入（`afterPack` 只改到内层程序，用户双击不到）。⚠️ **绝不能对最终 exe 直接跑 rcedit**——会丢掉尾部 NSIS payload（66MB→410KB，程序报废）。新增 `scripts/inject_icon_keep_overlay.py`：只对 PE 主体注入图标再把 overlay 原样拼回；`afterAllArtifactBuild` 钩子自动调用。验证：大小不变、7/7 图标命中、真实启动可自解压运行。
 
@@ -29,7 +32,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.9.2**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.9.3**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
