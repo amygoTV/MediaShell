@@ -1,4 +1,6 @@
 {
+  "spider": "https://cdn.jsdelivr.net/gh/amygoTV/MyTV@master/spider/fan_v2.txt;md5;654fb7dcb0aeaaea7dba0e662395f38e",
+
   "format": "tvbox-desktop/1",
   "name": "💣王炸资源💣（电脑桌面版）",
   "notice": "桌面版只支持苹果CMS(type=cms)与网页规则站；原影视仓的 csp_* Spider 站已标为 spider，界面会灰显并说明原因。完整 Spider 体验请用安卓影视仓。",
@@ -629,19 +631,19 @@
     {
       "name": "💣王炸直播💣",
       "type": 0,
-      "url": "https://cdn.jsdelivr.net/gh/amygoTV/MyTV@master/TVLives.txt",
+      "url": "https://cdn.jsdelivr.net/gh/amygoTV/MyTV@master/TVLives_v2.m3u",
       "epg": "http://epg.112114.xyz/?ch={name}&date={date}"
     },
     {
       "name": "💣王炸直播💣(备)",
       "type": 0,
-      "url": "https://fastly.jsdelivr.net/gh/amygoTV/MyTV@master/TVLives.txt",
+      "url": "https://gcore.jsdelivr.net/gh/amygoTV/MyTV@master/TVLives_v2.m3u",
       "epg": "http://epg.112114.xyz/?ch={name}&date={date}"
     },
     {
       "name": "📺B站直播适配📺",
       "type": 0,
-      "url": "https://cdn.jsdelivr.net/gh/amygoTV/MyTV@master/BiliLive.txt"
+      "url": "https://cdn.jsdelivr.net/gh/amygoTV/MyTV@master/BiliLive_v2.txt"
     },
     {
       "name": "⚽赛事直播·虎牙",

@@ -4,7 +4,13 @@
 
 ## 版本
 
-当前 **v1.6.0**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+### v1.7.0
+- 直播源改为影视仓/TVBox 标准 TXT（UTF-8 BOM + CRLF、一行一条线路、同名频道合并为多线路），本地内置 `TVLives.txt` / `BiliLive.txt` / `LiveSports.txt` 全部刷新到最新版本。
+- 站点配置切到永久固定地址链：`zheteng_v2.json`（主 cdn + 备 gcore）→ `aizheteng_v2.json` → `YSCv3/` → `TVLives_v2.m3u`。
+- 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
+
+
+当前 **v1.7.0**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
