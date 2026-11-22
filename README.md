@@ -4,6 +4,10 @@
 
 ## 版本
 
+### v1.9.5
+- **修复选线算法**：`pickBestLine` 原纯按响应速度排序，导致 sites=1 的空壳垂直线路（短剧/课堂/赛事，体积小、CDN 命中快 ~180ms）总比主线路（~280ms）快而被选中 → 站点列表几乎为空、直播源指向失效的 `PlatformLive.txt`/旧 TXT → 表现为「多仓解析混乱 + 直播无法播放」。改为**质量优先**：站点数降序 → 有效直播源（非 PlatformLive 的 m3u/txt）降序 → 速度升序。实测连续 3 轮稳定选中 sites=107 的摸鱼儿主线路。
+- `smoke_test.js` 测试框架改为串行（共享 mock 不再互相覆盖），新增 2 个选线用例，共 **17/17**。
+
 ### v1.9.4
 - **修复 M3U 直播源同名频道拆成多条**：订阅直播源现为 `TVLives_v2.m3u`，一个 `#EXTINF` 后跟多条 URL（同频道多线路）。原 `parseM3U` 每遇一条 URL 就新建一个 item，导致 CCTV-1 变成 4 个同名频道、左下角无法切换线路、超时切流失效。重写 `parseM3U`：连续 URL 归到同一频道的多线路、按 `group-title` 分组（央视/卫视/港澳台/影视轮播/体育）、容错上游字节截断造成的畸形组名。实测 187 频道/389 线路/5 组，同名频道合并恢复正常，左下角切线和超时自动换线恢复生效。
 
@@ -35,7 +39,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.9.4**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.9.5**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
