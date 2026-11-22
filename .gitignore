@@ -1,0 +1,7 @@
+node_modules/
+_stage/
+package-lock.json
+*.log
+userdata/
+
+dist-exe*/
