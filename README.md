@@ -4,6 +4,17 @@
 
 ## 版本
 
+### v1.9.1
+- **分类栏多行显示**：`.cat-bar` 改为 `flex-wrap` 自动换行，不再横向溢出看不到后面的标签；超过 12 个的分类收进「更多 N 个 ⌄」可展开/收起。
+- **父类分类兜底聚合**：电影/连续剧/综艺/动漫/短剧等父类在苹果 CMS 里 `total=0`（内容都在子类），新增 `PARENT_GROUPS` 语义归组 + `fetchCategoryByName()`：先走原有精确匹配，查不到才展开子类并发抓取合并去重，**不破坏原机制**。「全部」在首页无缓存时也能进入完整分页列表。
+- **目录版 EXE 图标**：新增 `scripts/deploy_dir.py`，把 `electron.exe` 改名 `MediaShell.exe` 并用 rcedit 注入图标；便携版 PE 资源已含 7 尺寸图标（看不到多为 Windows 图标缓存，需刷新）。
+
+### v1.9.0
+- **空壳首启架构**：应用不再内置任何影视资源；新增 `user-store.js` 把订阅与设置存 `DATA_DIR`。首次启动空壳引导、不发网络请求，导入一次后自动加载；新增 9 个用户配置 IPC（导入/导出备份/设置/重置等）。
+- **播放器体验**：单击画面暂停/恢复、双击全屏，移除中央常驻播放按钮；新增全屏/小窗(PiP)/弹幕按钮与自定义控制条。
+- **弹幕**：总开关 + 按源 URL 哈希独立记忆开关；主题明暗两套（持久化的 CSS 变量）；历史显示点播进度并可续播；重置弹框二次确认。
+- 新增 `scripts/smoke_test.js`（10 项）与 `scripts/store_test.js`（11 项），均全绿。
+
 ### v1.8.0
 - **新增应用图标**：新增 `build/icon.ico`（16/24/32/48/64/128/256 七尺寸）与 `build/icon.png`（512×512）。设计为「圆角电视屏底板 + 品牌渐变播放三角 + 直播信号弧」，配色取自界面主题（强调色 `#ff5c7a`、次强调 `#6ea8ff`、底色 `#0d0f14`）。
 - 图标由 `scripts/make_icon.py` **纯标准库生成**（不依赖 PIL/图像库），可重复构建：`python scripts/make_icon.py`。
@@ -15,7 +26,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.8.0**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.9.1**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
