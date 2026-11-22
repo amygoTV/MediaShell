@@ -4,6 +4,9 @@
 
 ## 版本
 
+### v1.9.2
+- **修复便携版外壳 exe 没图标**：真根因是 `signAndEditExecutable:false` 让 electron-builder 跳过了对自解压外壳的图标注入（`afterPack` 只改到内层程序，用户双击不到）。⚠️ **绝不能对最终 exe 直接跑 rcedit**——会丢掉尾部 NSIS payload（66MB→410KB，程序报废）。新增 `scripts/inject_icon_keep_overlay.py`：只对 PE 主体注入图标再把 overlay 原样拼回；`afterAllArtifactBuild` 钩子自动调用。验证：大小不变、7/7 图标命中、真实启动可自解压运行。
+
 ### v1.9.1
 - **分类栏多行显示**：`.cat-bar` 改为 `flex-wrap` 自动换行，不再横向溢出看不到后面的标签；超过 12 个的分类收进「更多 N 个 ⌄」可展开/收起。
 - **父类分类兜底聚合**：电影/连续剧/综艺/动漫/短剧等父类在苹果 CMS 里 `total=0`（内容都在子类），新增 `PARENT_GROUPS` 语义归组 + `fetchCategoryByName()`：先走原有精确匹配，查不到才展开子类并发抓取合并去重，**不破坏原机制**。「全部」在首页无缓存时也能进入完整分页列表。
@@ -26,7 +29,7 @@
 - 修复：`parseTVLines` 按频道名合并同名行（此前同一频道会显示成多条重名条目），并剥离 BOM、兼容 `,` 与 `#` 两种地址分隔。
 
 
-当前 **v1.9.1**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
+当前 **v1.9.2**（开发日志见独立仓库 [MediaShell-DevLog](https://github.com/amygoTV/MediaShell-DevLog)）。
 
 ### 单文件便携版（推荐）
 
