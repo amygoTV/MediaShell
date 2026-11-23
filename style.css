@@ -251,10 +251,9 @@ body.light .live-external{background:radial-gradient(circle at 50% 40%, #eef2fb 
   font-size:24px; display:flex; align-items:center; justify-content:center; z-index:4;
   pointer-events:none; opacity:0; transition:opacity .16s;}
 .live-center-play.show{opacity:.92;}
-.live-tools{position:absolute; right:16px; top:14px; display:flex; gap:8px; z-index:6;}
-.live-tool-btn{background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.25); color:#dfe4ee;
-  padding:7px 13px; border-radius:8px; cursor:pointer; font-size:12px; backdrop-filter:blur(4px);}
-.live-tool-btn:hover{border-color:var(--accent2); color:#fff; background:rgba(0,0,0,.8);}
+/* v1.13.3：删除旧的 .live-tools absolute 规则（right:16px; top:14px）与 .live-tool-btn。
+   旧规则在文件下方覆盖了本文件上面 v1.13.1 的文档流布局，把全屏/小窗按钮拽回播放区右上角，
+   而播放区被原生 mpv 子窗口盖住 → 按钮实际看不见。现在只保留播放区下方的 .live-tools（见上文）。 */
 .live-hint{font-size:12px; color:var(--muted); line-height:1.6;}
 
 /* history / favorite rows */

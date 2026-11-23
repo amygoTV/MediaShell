@@ -4,6 +4,11 @@
 
 ## 版本
 
+### v1.13.3
+- **修复「搜索找不到资源」**：旧版只搜当前选中站点，默认站（api.guangsuapi.com）整站返回空时就显示「没有找到」，而其它站其实有结果也不去搜。改为**在所有可用 CMS 站并发搜索**（当前站优先、按 api 去重、逐站超时 8s、整体 12s 上限），汇总去重后展示，每条结果记住来源站，点海报用对应站打开详情。实测「仙侠」：光速/虎牙空、红牛 5 条、淘片 2 条，新版能全部汇总出来。
+- **直播「全屏 / 小窗」按钮真正移到播放区下方**：`style.css` 里旧的 `.live-tools{position:absolute;top:14px}` 规则覆盖了文档流布局，把按钮拽回被 mpv 窗口遮住的右上角；删除该冲突规则。
+- `smoke_test.js` 新增 3 条断言（多站搜索 / 来源站打开 / 直播工具栏无 absolute 覆盖），共 **42/42** 通过。
+
 ### v1.13.2
 - **修复点播播放器初始化失败**（`option.contextmenu.0.html require 'string' or 'Element' type`）：v1.13.0 加右键菜单时只传了 `name`，而 ArtPlayer 的 contextmenu schema 要求 `html`（string|Element）必填，`name` 只是可选显示名——构造函数在 option 校验阶段直接抛错，导致点播完全起不来。改为传 `html: '打开系统播放器'`。
 - **点播「全屏 / 小窗」按钮移到播放区下方**：从顶栏 `player-actions` 移到播放区下方的独立工具栏（`.player-tools`），与直播页布局一致，避免和 ArtPlayer 自带控制栏的全屏按钮重叠。绑定不变。

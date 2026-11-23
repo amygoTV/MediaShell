@@ -727,7 +727,9 @@ function posterHTML(v) {
       '<div class="remarks">' + esc(v.vod_remarks || '') + '</div>' +
       '<span class="imgfail">加载失败</span></div>'
     : '<div class="thumb"><span class="ph">▶</span><div class="remarks">' + esc(v.vod_remarks || '') + '</div></div>';
-  return '<div class="poster" data-id="' + esc(v.vod_id) + '" data-name="' + esc(v.vod_name) + '">' + pic +
+  // v1.13.3：多站搜索结果带来源站 key，海报点击时用对应站打开详情
+  const siteAttr = v.__siteKey ? ' data-sitekey="' + esc(v.__siteKey) + '"' : '';
+  return '<div class="poster"' + siteAttr + ' data-id="' + esc(v.vod_id) + '" data-name="' + esc(v.vod_name) + '">' + pic +
     '<div class="pname">' + esc(v.vod_name) + '</div></div>';
 }
 
@@ -760,9 +762,12 @@ function watchImages(box) {
 
 function bindPosters(box, site) {
   $$('.poster', box).forEach((el) => {
-    el.onclick = () => openDetail(site, el.dataset.id, el.dataset.name);
+    // v1.13.3：海报若带 data-sitekey（多站搜索结果），用来源站而非当前站打开
+    const key = el.dataset.sitekey;
+    const useSite = (key && (state.sites || []).find((s) => s.key === key)) || site;
+    el.onclick = () => openDetail(useSite, el.dataset.id, el.dataset.name);
     // 悬停即预取详情，点开时基本秒出
-    el.onmouseenter = () => prefetchDetail(site, el.dataset.id);
+    el.onmouseenter = () => prefetchDetail(useSite, el.dataset.id);
   });
   watchImages(box);
 }
@@ -1299,23 +1304,76 @@ function danmakuEmit(text, speed) {
 
 // ---------- search ----------
 function renderSearch() {
-  $('#content').innerHTML = '<div class="section-title">搜索 <small>在当前站点内搜索；逐个站点可切换</small></div>' +
+  $('#content').innerHTML = '<div class="section-title">搜索 <small>在所有可用采集站中搜索（自动跳过失效站点）</small></div>' +
     '<div class="empty">在顶部搜索框输入关键词并回车，例如「短剧」「仙侠」</div>';
 }
+// v1.13.3：多站并发搜索。
+// 旧版只搜 state.site 一个站，默认站一旦失效（实测 api.guangsuapi.com 整站返回空）
+// 就显示「没有找到相关资源」，而其它站其实有结果也不去搜。改为遍历所有 CMS 站并发查询，
+// 当前站排第一（结果优先展示），按 api 去重，逐站超时 8s，整体 12s 上限。
+// 每条结果记住来源站（__siteKey），海报点击时用对应站点打开详情。
 async function doSearch(kw) {
-  const s = state.site;
-  if (!s || !isCMS(s)) { toast('请先选择一个 CMS 站点'); return; }
+  if (!kw) return;
   setView('search');
   const c = $('#content');
-  c.innerHTML = '<div class="crumb">‹ 返回</div><div class="section-title">搜索「' + esc(kw) + '」<small>' + esc(s.name) + ' · <span class="spinner"></span>搜索中…</small></div><div id="searchList" class="poster-grid"></div>';
+  c.innerHTML = '<div class="crumb">‹ 返回</div><div class="section-title">搜索「' + esc(kw) + '」<small><span class="spinner"></span>正在搜索所有采集站…</small></div><div id="searchList" class="poster-grid"></div>';
   $('.crumb').onclick = renderSearch;
-  try {
-    const d = await cmsGet(join(apiBase(s), { ac: 'videolist', wd: kw, pg: 1 }), 9000);
-    const box = $('#searchList');
-    box.innerHTML = (d.list || []).map(posterHTML).join('') || '<div class="empty">没有找到相关资源</div>';
-    bindPosters(box, s);
-    $('.section-title small').innerHTML = esc(s.name) + ' · 共 ' + (d.total || 0) + ' 条';
-  } catch (e) { $('#searchList').innerHTML = '<div class="empty">搜索失败：' + esc(e.message) + '</div>'; }
+
+  // 参与搜索的站点：当前站优先 + 其余 CMS 站，按 api 去重（虎牙采集/虎牙HLS 同 api 只搜一次）
+  const seenApi = {};
+  const sites = [];
+  const addSite = (s) => {
+    if (!s || !isCMS(s)) return;
+    const api = apiBase(s);
+    if (seenApi[api]) return;
+    seenApi[api] = 1;
+    sites.push(s);
+  };
+  addSite(state.site);
+  (state.sites || []).forEach(addSite);
+  if (!sites.length) { toast('请先导入 CMS 采集站配置'); return; }
+
+  // 并发搜索，单个 Promise 内部吞掉异常，保证 Promise.all 一定 resolve
+  const jobs = sites.map((s) =>
+    cmsGet(join(apiBase(s), { ac: 'videolist', wd: kw, pg: 1 }), 8000)
+      .then((d) => ({ site: s, list: Array.isArray(d.list) ? d.list : [] }))
+      .catch(() => ({ site: s, list: [] })));
+  const all = await Promise.race([
+    Promise.all(jobs),
+    new Promise((r) => setTimeout(() => r(null), 12000)),
+  ]);
+
+  const box = $('#searchList');
+  if (!box) return;  // 搜索期间用户切走了视图
+  if (!all) {
+    box.innerHTML = '<div class="empty">搜索超时（' + sites.length + ' 个站点均未及时响应），请稍后重试</div>';
+    $('.section-title small').textContent = '超时';
+    return;
+  }
+
+  // 汇总去重：按 vod_id + vod_name，先到的站（当前站优先）胜出
+  const seenVod = {};
+  const merged = [];
+  let okSites = 0;
+  all.forEach(({ site, list }) => {
+    if (list.length) okSites++;
+    list.forEach((v) => {
+      const k = String(v.vod_id) + '|' + String(v.vod_name || '');
+      if (seenVod[k]) return;
+      seenVod[k] = 1;
+      v.__siteKey = site.key;
+      merged.push(v);
+    });
+  });
+
+  if (!merged.length) {
+    box.innerHTML = '<div class="empty">已搜索 ' + sites.length + ' 个站点，均未找到「' + esc(kw) + '」相关资源<br><span class="muted">换个关键词试试，或稍后再搜</span></div>';
+    $('.section-title small').textContent = sites.length + ' 站 · 0 条';
+    return;
+  }
+  box.innerHTML = merged.map(posterHTML).join('');
+  bindPosters(box, state.site);   // 每条海报按 __siteKey 用各自来源站打开详情
+  $('.section-title small').textContent = okSites + '/' + sites.length + ' 站有结果 · 共 ' + merged.length + ' 条';
 }
 
 // ---------- live ----------

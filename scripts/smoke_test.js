@@ -549,6 +549,38 @@ t('v1.13.2: 全屏/小窗按钮在播放区下方工具栏，不在顶栏 player
   }
 });
 
+t('v1.13.3: doSearch 多站并发搜索，不再只搜 state.site 单站', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const start = app.indexOf('async function doSearch');
+  const end = app.indexOf('\n// ---------- live ----------', start);
+  const body = app.slice(start, end > 0 ? end : undefined);
+  if (!/state\.sites\s*\|\|\s*\[\]/.test(body)) throw new Error('doSearch 未遍历 state.sites');
+  if (!/sites\.map\(/.test(body) || !/Promise\.all\(/.test(body)) throw new Error('未做多站并发搜索');
+  if (!/seenApi\[api\]/.test(body)) throw new Error('未按 api 去重站点');
+  if (!/__siteKey/.test(body)) throw new Error('搜索结果未标记来源站');
+  if (!/seenVod\[k\]/.test(body)) throw new Error('多站结果未去重');
+  if (!/搜索超时|正在搜索所有采集站/.test(body)) throw new Error('缺多站搜索的进度/超时提示');
+});
+t('v1.13.3: 海报点击按 data-sitekey 用来源站打开，posterHTML 输出该属性', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const ph = app.slice(app.indexOf('function posterHTML'), app.indexOf('function bindPosters'));
+  if (!/data-sitekey/.test(ph)) throw new Error('posterHTML 未输出 data-sitekey');
+  const bp = app.slice(app.indexOf('function bindPosters'), app.indexOf('function openCategory'));
+  if (!/dataset\.sitekey/.test(bp)) throw new Error('bindPosters 未读取 dataset.sitekey');
+  if (!/state\.sites[\s\S]{0,80}find/.test(bp)) throw new Error('未按 sitekey 查回站点对象');
+});
+t('v1.13.3: 直播 .live-tools 下方布局无 absolute 覆盖', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  // 必须保留文档流布局（margin 而非 absolute）
+  if (!/\.live-tools\{display:flex; gap:8px; align-items:center; margin:8px 0 4px;\}/.test(css)) {
+    throw new Error('缺 .live-tools 文档流下方布局');
+  }
+  // 不能再有把按钮拽回右上角的 absolute 规则
+  if (/\.live-tools\{position:absolute/.test(css)) {
+    throw new Error('.live-tools 仍被 absolute 定位到右上角');
+  }
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;
