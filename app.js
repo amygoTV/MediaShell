@@ -15,6 +15,9 @@ const state = {
   favorites: loadLS('ms_favorites', []),
   history: loadLS('ms_history', []),
   playerHls: null,
+  // v1.13：点播播放器改为 ArtPlayer（参考 TVBox Desktop），artHls 是被 customType 创建的 hls 实例
+  art: null,
+  artHls: null,
   currentPlay: null, // {title, episodes, srcIdx}
   settings: {},      // 用户设置（主题/弹幕等），由主进程持久化
   shellMode: true,   // 空壳模式：还没导入任何影视接口
@@ -975,55 +978,151 @@ function hlsFastConfig(extra) {
   return Object.assign(base, extra || {});
 }
 
+// v1.13：ArtPlayer 内部 <video> 的取用入口。弹幕/进度/控制都挂在这个元素上，
+// 这样换播放器时业务代码不必散落改动。
+function artVideo() { return state.art && state.art.video ? state.art.video : null; }
+
+// v1.13：移植 TVBox Desktop 的 makeM3u8Loader —— ArtPlayer customType 回调，
+// 签名 (video, url, art)（见 artplayer 源码 i.call(t, r, a, t)）。
+// 相对 MediaShell 原来的 hlsFastConfig，absorb 了四个实战优化：
+//  1. abrEwmaDefaultEstimate=4e6：默认 500kbps 会让多档直播从最低档起播、糊好几秒；
+//  2. MANIFEST_PARSED 时按 height*1e6+bitrate 手动选最高档 nextLevel，起播即高清；
+//  3. fatal 错误分级恢复（网络 startLoad / 媒体 recoverMediaError），最多 2 次；
+//  4. xhrSetup 注入 Referer，应对采集站防盗链。
+// 与原有「大缓冲抗抖动」策略融合：保留 maxBufferLength 24 / maxMaxBufferLength 60，
+// 但关掉 capLevelToPlayerSize，否则第 2 条选档会被播放器尺寸压回去。
+function makeM3u8Loader(video, url, art) {
+  const msg = $('#playerMsg');
+  const cfg = hlsFastConfig({
+    abrEwmaDefaultEstimate: 4e6,
+    capLevelToPlayerSize: false,
+  });
+  if (state.currentPlay && state.currentPlay.referer) {
+    const ref = state.currentPlay.referer;
+    cfg.xhrSetup = (xhr) => { try { xhr.setRequestHeader('Referer', ref); } catch (e) {} };
+  }
+  let hls;
+  try { hls = new window.Hls(cfg); }
+  catch (e) {
+    if (msg) { msg.textContent = 'HLS 初始化失败：' + (e && e.message || e); msg.classList.remove('hidden'); }
+    return;
+  }
+  let recovered = 0;
+  hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+    const levels = hls.levels || [];
+    if (levels.length > 1) {
+      let best = 0, bestScore = -1;
+      levels.forEach((lv, i) => {
+        const score = (lv.height || 0) * 1e6 + (lv.bitrate || 0);
+        if (score > bestScore) { bestScore = score; best = i; }
+      });
+      hls.nextLevel = best;
+    }
+  });
+  hls.on(window.Hls.Events.ERROR, (_e, data) => {
+    if (!data || !data.fatal) return;
+    if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && recovered < 2) {
+      recovered++; hls.startLoad(); return;
+    }
+    if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && recovered < 2) {
+      recovered++; hls.recoverMediaError(); return;
+    }
+    if (msg) {
+      msg.textContent = '播放出错（' + data.type + '）。可点右上角「系统播放器」重试。';
+      msg.classList.remove('hidden');
+    }
+  });
+  hls.loadSource(url);
+  hls.attachMedia(video);
+  state.artHls = hls;
+  if (art && art.once) {
+    art.once('destroy', () => {
+      try { hls.destroy(); } catch (e) {}
+      if (state.artHls === hls) state.artHls = null;
+    });
+  }
+}
+
+// 销毁当前 ArtPlayer 实例（切集/切源/关播放器都走这里）
+function destroyArt() {
+  if (state.artHls) { try { state.artHls.destroy(); } catch (e) {} state.artHls = null; }
+  if (state.art) { try { state.art.destroy(false); } catch (e) {} state.art = null; }
+  if (state.playerHls) { try { state.playerHls.destroy(); } catch (e) {} state.playerHls = null; }
+}
+
 function playEpisode(ep, title) {
   if (!ep || !ep.url) return;
-  const video = $('#video'); const msg = $('#playerMsg');
+  const msg = $('#playerMsg');
   msg.classList.add('hidden');
-  if (state.playerHls) { state.playerHls.destroy(); state.playerHls = null; }
-  video.pause();
+  destroyArt();
   danmakuStop();
   const url = ep.url;
   // 记录当前源，弹幕开关按源记忆状态
   state.currentPlay = state.currentPlay || {};
   state.currentPlay.source = url;
   state.currentPlay.title = title;
+  state.currentPlay.referer = ep.referer || '';
   const isHls = /\.m3u8?(\?|$)/i.test(url);
-  if (isHls && window.Hls && window.Hls.isSupported()) {
-    const hls = new window.Hls(hlsFastConfig());
-    hls.loadSource(url); hls.attachMedia(video);
-    hls.on(window.Hls.Events.ERROR, (_e, data) => {
-      if (data.fatal) {
-        msg.textContent = '播放出错（' + data.type + '）。可点右上角「系统播放器」重试。';
-        msg.classList.remove('hidden');
-      }
-    });
-    state.playerHls = hls;
-    video.play().catch(() => {});
-  } else if (/^https?:\/\//i.test(url)) {
-    video.src = url; video.play().catch(() => {});
-  } else {
+  if (!isHls && !/^https?:\/\//i.test(url)) {
     msg.textContent = '无法识别的播放地址：' + url.slice(0, 80);
     msg.classList.remove('hidden');
+    return;
   }
+  if (!window.Artplayer) {
+    msg.textContent = '播放器组件未加载（artplayer.min.js 缺失？）';
+    msg.classList.remove('hidden');
+    return;
+  }
+  // TVBox 踩坑复刻：type/poster 只在有值时传，undefined 会触发 ArtPlayer option 校验器抛错 → 白屏。
+  const opts = {
+    container: $('#artContainer'),
+    url: url,
+    autoplay: true,
+    // 用 ArtPlayer 默认全套控制栏（播放/进度/时间/音量/网页全屏/全屏 + 设置菜单倍速/比例/翻转）
+    setting: true,
+    hotkey: true,
+    fastForward: true,
+    lang: 'zh-cn',
+    contextmenu: [
+      { name: '打开系统播放器', click: () => {
+          MS.openWithPlayer(url, title).then((r) => toast(r && r.error ? '调用失败' : '已用系统播放器打开'));
+        } },
+    ],
+  };
+  if (isHls) {
+    opts.type = 'm3u8';
+    opts.customType = { m3u8: makeM3u8Loader };
+  }
+  try {
+    state.art = new window.Artplayer(opts);
+  } catch (e) {
+    msg.textContent = '播放器初始化失败：' + (e && e.message || e);
+    msg.classList.remove('hidden');
+    return;
+  }
+  // ArtPlayer 自带控制栏，绑定一次业务事件（进度写历史 / 弹幕按钮状态）
+  const video = artVideo();
+  if (video) video.addEventListener('timeupdate', () => {
+    const now = Date.now();
+    if (now - (video._lastProg || 0) > 5000) {
+      video._lastProg = now;
+      const epName = state.currentPlay && state.currentPlay.episodes && state.currentPlay.idx != null
+        ? (state.currentPlay.episodes[state.currentPlay.idx] || {}).name : '';
+      updateHistoryProgress(state.currentPlay && state.currentPlay.title, video.currentTime, epName);
+    }
+  });
 }
 
 // ---- 播放 / 暂停 ----
+// v1.13：单击/双击画面交回 ArtPlayer 自己处理（单击暂停、双击全屏），
+// 这里只保留顶栏按钮入口，避免重复绑定导致 toggle 两次等于没按。
 function togglePlay() {
-  const v = $('#video');
+  if (state.art && typeof state.art.toggle === 'function') { state.art.toggle(); return; }
+  const v = artVideo();
   if (!v) return;
-  if (v.paused) { v.play().catch(() => {}); showPlayIcon(false); }
-  else { v.pause(); showPlayIcon(true); }
+  if (v.paused) v.play().catch(() => {}); else v.pause();
 }
-function showPlayIcon(paused) {
-  const ov = $('#playOverlay');
-  if (!ov) return;
-  const icon = ov.querySelector('.po-icon');
-  if (icon) icon.textContent = paused ? '▶' : '⏸';
-  ov.classList.remove('hidden');
-  ov.classList.add('show');
-  clearTimeout(ov._t);
-  ov._t = setTimeout(() => { ov.classList.remove('show'); }, paused ? 900 : 420);
-}
+function showPlayIcon(paused) { /* v1.13：ArtPlayer 自带播放状态图标，保留函数名兼容旧调用 */ }
 
 // ---- 全屏 / 小窗 ----
 function toggleFullscreen() {
@@ -1036,7 +1135,7 @@ function toggleFullscreen() {
   } catch (e) { toast('全屏切换失败：' + (e && e.message || e)); }
 }
 async function togglePiP() {
-  const v = $('#video');
+  const v = artVideo();
   if (!v) return;
   try {
     if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
@@ -1045,59 +1144,27 @@ async function togglePiP() {
   } catch (e) { toast('小窗播放失败：' + (e && e.message || e)); }
 }
 
-// ---- 播放器控制条绑定 ----
+// ---- 顶栏按钮绑定（点播控制条已由 ArtPlayer 接管）----
 function bindPlayerControls() {
-  const video = $('#video');
-  const stage = $('#playerStage');
-  if (!video || !stage) return;
-
-  // 单击画面：暂停/恢复（点控制条不触发）
-  stage.addEventListener('click', (e) => {
-    if (e.target.closest('.player-controls')) return;
-    togglePlay();
-  });
-  // 双击画面：全屏
-  stage.addEventListener('dblclick', (e) => {
-    if (e.target.closest('.player-controls')) return;
-    toggleFullscreen();
-  });
-
-  $('#btnPP').onclick = () => togglePlay();
   $('#btnFullscreen').onclick = () => toggleFullscreen();
   $('#btnPiP').onclick = () => togglePiP();
   $('#btnDanmaku').onclick = () => toggleDanmaku();
-
-  $('#pcVol').onclick = () => {
-    video.muted = !video.muted;
-    $('#pcVol').textContent = video.muted ? '🔇' : '🔊';
-  };
-  $('#pcRate').onchange = (e) => { video.playbackRate = parseFloat(e.target.value) || 1; };
-  $('#pcSeek').oninput = (e) => {
+  // 旧自写控制条虽已隐藏，保留绑定以便回退时仍能工作
+  const video = artVideo();
+  if (!video) return;
+  const btnPP = $('#btnPP'); if (btnPP) btnPP.onclick = () => togglePlay();
+  const rate = $('#pcRate'); if (rate) rate.onchange = (e) => { video.playbackRate = parseFloat(e.target.value) || 1; };
+  const seek = $('#pcSeek'); if (seek) seek.oninput = (e) => {
     if (!video.duration || !isFinite(video.duration)) return;
     video.currentTime = (e.target.value / 1000) * video.duration;
   };
-  video.addEventListener('timeupdate', () => {
-    const cur = $('#pcTime'); const seek = $('#pcSeek');
-    if (cur) cur.textContent = fmtTime(video.currentTime) + ' / ' + fmtTime(video.duration);
-    if (seek && video.duration && isFinite(video.duration)) {
-      seek.value = Math.round((video.currentTime / video.duration) * 1000);
-    }
-    // 观看进度写回历史（节流：每 5 秒一次）
-    const now = Date.now();
-    if (now - (video._lastProg || 0) > 5000) {
-      video._lastProg = now;
-      const ep = state.currentPlay && state.currentPlay.episodes && state.currentPlay.idx != null
-        ? (state.currentPlay.episodes[state.currentPlay.idx] || {}).name : '';
-      updateHistoryProgress(state.currentPlay && state.currentPlay.title, video.currentTime, ep);
-    }
-  });
-  video.addEventListener('play', () => { const b = $('#btnPP'); if (b) b.textContent = '⏸'; });
-  video.addEventListener('pause', () => { const b = $('#btnPP'); if (b) b.textContent = '▶'; });
+  const vol = $('#pcVol'); if (vol) vol.onclick = () => { video.muted = !video.muted; vol.textContent = video.muted ? '🔇' : '🔊'; };
+  video.addEventListener('play', () => { if (btnPP) btnPP.textContent = '⏸'; });
+  video.addEventListener('pause', () => { if (btnPP) btnPP.textContent = '▶'; });
 }
 
 $('#btnPlayerClose').onclick = () => {
-  const v = $('#video'); v.pause(); v.removeAttribute('src'); v.load();
-  if (state.playerHls) { state.playerHls.destroy(); state.playerHls = null; }
+  destroyArt();
   danmakuStop();
   $('#player').classList.add('hidden');
 };
@@ -1272,7 +1339,21 @@ let liveState = {
   embedded: false,  // v1.12：当前是否以内嵌方式播放（mpv 挂在壳内播放区）
   paused: false,    // 内嵌播放的暂停状态
   fullscreen: false,// 内嵌播放的全屏状态
+  // v1.13：线路健康缓存（参考 TVBox live-health.json），按 URL 存 {ok, ts}，避免每次进直播页全量重探
+  health: loadLS('ms_live_health_v1', {}),
 };
+const LIVE_HEALTH_TTL = 6 * 3600 * 1000;  // 6 小时内复用缓存结果
+function saveLiveHealth() { saveLS('ms_live_health_v1', liveState.health); }
+function healthFresh(u) {
+  const h = liveState.health[u];
+  return !!(h && Date.now() - h.ts < LIVE_HEALTH_TTL);
+}
+// 把探测结果写回内存+磁盘缓存，并同步到 ch.good（渲染层用）
+function markLineHealth(ch, u, ok) {
+  liveState.health[u] = { ok: !!ok, ts: Date.now() };
+  ch.good = ch.good || {};
+  ch.good[u] = !!ok;
+}
 function saveLiveSettings() {
   saveLS('ms_live_timeout', liveState.timeoutSec);
   saveLS('ms_live_decoder', liveState.decoder);
@@ -1437,29 +1518,69 @@ async function ensureLiveData() {
   try { liveState.players = await MS.detectPlayers(); } catch (e) { liveState.players = {}; }
 }
 
-// 线路健康探测：并发抽测每条线路，标记可用/失效，播放时优先走可用线路
-async function probeLiveLines() {
+// 线路健康探测：并发抽测每条线路，标记可用/失效，播放时优先走可用线路。
+// v1.13：先吃缓存（6h 内不过期），只对「没探过 / 已过期」的线路真正发请求；
+// 结果同时写回 ch.good 与持久化缓存，下次进直播页不必全量重探。
+async function probeLiveLines(opts) {
+  const force = !!(opts && opts.force);
   const all = [];
   liveState.channels.forEach((ch) => ch.urls.forEach((u) => all.push({ ch, u })));
   if (!all.length) return;
+  // 缓存命中：直接回填 ch.good，不重复探测
+  let cached = 0;
+  all.forEach((item) => {
+    if (!force && healthFresh(item.u)) {
+      const h = liveState.health[item.u];
+      item.ch.good = item.ch.good || {};
+      item.ch.good[item.u] = !!h.ok;
+      cached++;
+      item._skip = true;
+    }
+  });
+  const todo = all.filter((x) => !x._skip);
+  if (!todo.length) {
+    if (cached) saveLiveHealth();
+    return;
+  }
   liveState.probing = true;
   const CONC = 8;
   let idx = 0;
   const worker = async () => {
-    while (idx < all.length) {
-      const item = all[idx++];
+    while (idx < todo.length) {
+      const item = todo[idx++];
       let ok = false;
       try {
         const r = await MS.probeStream(item.u);
         ok = !!(r && r.ok && !r.is404 && !r.isHtml);
       } catch (e) { ok = false; }
-      item.ch.good = item.ch.good || {};
-      item.ch.good[item.u] = ok;
+      markLineHealth(item.ch, item.u, ok);
     }
   };
   await Promise.all(Array.from({ length: CONC }, worker));
   liveState.probing = false;
+  saveLiveHealth();
   renderLiveTree();
+}
+
+// 点频道时的懒体检：若该频道所有线路都没有新鲜缓存，就只探这一条频道的几条线路
+// （TVBox 的「点开才探」策略），探完把 good 落到 ch.good 供选线用。不阻塞主流程太久。
+async function probeChannelLazy(ch) {
+  if (!ch || !ch.urls || !ch.urls.length) return;
+  const todo = ch.urls.filter((u) => !healthFresh(u));
+  if (!todo.length) {
+    ch.good = ch.good || {};
+    ch.urls.forEach((u) => { ch.good[u] = !!liveState.health[u].ok; });
+    return;
+  }
+  await Promise.all(todo.map(async (u) => {
+    let ok = false;
+    try {
+      const r = await MS.probeStream(u);
+      ok = !!(r && r.ok && !r.is404 && !r.isHtml);
+    } catch (e) {}
+    markLineHealth(ch, u, ok);
+  }));
+  saveLiveHealth();
 }
 
 function renderLive() {
@@ -1522,7 +1643,7 @@ function renderLive() {
   if (bp) bp.onclick = async () => {
     if (liveState.probing) return;
     bp.disabled = true; bp.textContent = '检测中…';
-    await probeLiveLines();
+    await probeLiveLines({ force: true });  // 手动点「检测线路」= 强制全量重探，不吃缓存
     bp.disabled = false; bp.textContent = '🔍 检测线路';
     const total = liveState.channels.reduce((a, c) => a + c.urls.length, 0);
     let ok = 0;
@@ -1636,13 +1757,19 @@ function renderLiveTree() {
     const ch = chMap.get(el.dataset.id);
     if (!ch) return;
     liveStop();
-    // 已探测过：优先挑第一条可用线路
-    let idx = 0;
-    if (ch.good) {
-      const goodIdx = ch.urls.findIndex((u) => ch.good[u]);
-      if (goodIdx >= 0) idx = goodIdx;
+    // v1.13 懒体检：点频道时先看缓存/已探结果，没有才现场探这一条频道（TVBox 策略）
+    const hasFresh = ch.urls.some((u) => healthFresh(u));
+    const pickIdx = () => {
+      let i = 0;
+      if (ch.good) { const g = ch.urls.findIndex((u) => ch.good[u]); if (g >= 0) i = g; }
+      return i;
+    };
+    if (!hasFresh) {
+      const now = $('#liveNow'); if (now) now.textContent = ch.name + '（体检中…）';
+      probeChannelLazy(ch).then(() => livePlayChannel(ch, pickIdx()));
+    } else {
+      livePlayChannel(ch, pickIdx());
     }
-    livePlayChannel(ch, idx);
     renderLiveTree();
   };
 }
@@ -1787,8 +1914,11 @@ function liveShowMsg(text) {
   const msg = $('#liveMsg'); if (!msg) return;
   msg.textContent = text; msg.classList.remove('hidden');
 }
-function livePlayChannel(ch, lineIdx) {
+function livePlayChannel(ch, lineIdx, tried) {
   liveStop();
+  // v1.13：失败自动换线——tried 记录本次已尝试的线路下标，避免来回死循环
+  tried = tried || new Set();
+  tried.add(lineIdx);
   liveState.current = ch;
   liveState.lineIdx = lineIdx;
   const now = $('#liveNow'); if (now) now.textContent = ch.name;
@@ -1833,16 +1963,36 @@ function livePlayChannel(ch, lineIdx) {
     const panel = $('.live-external-panel');
     if (panel) panel.classList.remove('hidden');
     MS.playExternal(pick, rawUrl, liveState.decoder).then((r2) => {
-      if (r2 && r2.error) liveShowMsg('调用 ' + pick + ' 失败：' + r2.error + '（可在「播放器」里换一个）');
+      if (r2 && r2.error) liveAutoNextLine(ch, lineIdx, tried, '调用 ' + pick + ' 失败：' + r2.error);
       else liveShowMsg('已用 ' + pick + ' 打开：' + ch.name + ' · 线路' + (lineIdx + 1) + '（独立窗口硬解）');
     });
   }).catch(() => {
     liveState.embedded = false;
     MS.playExternal(pick, rawUrl, liveState.decoder).then((r2) => {
-      if (r2 && r2.error) liveShowMsg('调用 ' + pick + ' 失败：' + r2.error);
+      if (r2 && r2.error) liveAutoNextLine(ch, lineIdx, tried, '调用 ' + pick + ' 失败：' + r2.error);
       else liveShowMsg('已用 ' + pick + ' 打开：' + ch.name + '（独立窗口）');
     });
   });
+}
+
+// v1.13：线路启动失败时自动切下一条可用线路（TVBox「video:error → 自动换线」的壳内版本）。
+// 标记坏线 → 从缓存/已探结果里挑下一条 good → 递归重试；全部试完才停留在错误提示。
+function liveAutoNextLine(ch, badIdx, tried, reason) {
+  markLineHealth(ch, ch.urls[badIdx], false);
+  // 优先未试过且缓存认为可用的线路，其次任意未试过的线路
+  const order = ch.urls.map((u, i) => i).filter((i) => !tried.has(i));
+  order.sort((a, b) => {
+    const ga = ch.good && ch.good[ch.urls[a]] ? 1 : 0;
+    const gb = ch.good && ch.good[ch.urls[b]] ? 1 : 0;
+    return gb - ga;
+  });
+  if (!order.length) {
+    liveShowMsg('全部 ' + ch.urls.length + ' 条线路均无法播放。' + reason + '（可点「检测线路」重探）');
+    return;
+  }
+  const next = order[0];
+  liveShowMsg('线路' + (badIdx + 1) + '不可用，自动切到线路' + (next + 1) + '…');
+  setTimeout(() => livePlayChannel(ch, next, tried), 300);
 }
 
 // 采集直播播放区在屏幕上的位置与尺寸（相对主窗口客户区左上角）
@@ -2423,6 +2573,13 @@ window.__msSelfTest = {
   expandSubscription: expandSubscription,
   parseTVLines: parseTVLines,
   parseM3U: parseM3U,
+  // v1.13：ArtPlayer 点播 + 直播健康缓存/自动换线
+  makeM3u8Loader: makeM3u8Loader,
+  destroyArt: destroyArt,
+  healthFresh: healthFresh,
+  markLineHealth: markLineHealth,
+  probeChannelLazy: probeChannelLazy,
+  liveAutoNextLine: liveAutoNextLine,
   addHistory: addHistory,
   renderStore: renderStore,
   fmtTime: fmtTime,

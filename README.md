@@ -4,6 +4,13 @@
 
 ## 版本
 
+### v1.13.0
+- **点播播放器换成 ArtPlayer 5.4（参考 TVBox Desktop 的内置播放器）**：原生 `<video>` + 自写控制条改为 ArtPlayer，获得完整控制栏（播放/进度/时间/音量/网页全屏/全屏）+ 设置菜单（倍速/画面比例/翻转）+ 快捷键（空格暂停、方向键快进/音量）+ 右键菜单（含「打开系统播放器」）。弹幕层、选集切换、观看进度写历史、右上角系统播放器按钮全部保留；旧自写控制条隐藏但代码保留可回退。新增依赖 `vendor/artplayer.min.js`（134KB，本地打包不依赖 CDN）。
+- **HLS 加载优化（移植 TVBox `makeM3u8Loader`）**：`abrEwmaDefaultEstimate=4e6`（多档源不再从最低码率起播糊好几秒）；`MANIFEST_PARSED` 时按 `height*1e6+bitrate` 手动选最高档，起播即高清；fatal 错误分级恢复（网络错误 `startLoad()`、媒体错误 `recoverMediaError()`，限 2 次）；`xhrSetup` 注入 Referer 应对采集站防盗链。保留原有「大缓冲抗抖动」（maxBufferLength 24 / maxMaxBufferLength 60）。
+- **直播线路体检增强（TVBox `live-health` 思路）**：探测结果按 URL 缓存 6 小时（`ms_live_health_v1`）；点频道时若该频道无新鲜缓存，只现场探这一条频道的几条线路（懒体检）而非全量；启动失败自动切下一条可用线路（标记坏线 → 按 good 优先递归重试），全部失败才停留错误提示。「检测线路」按钮仍强制全量重探。
+- **直播 mpv 内嵌播放链路未改动**：FLV/TS 仍需 mpv 硬解，ArtPlayer 只用于点播，不碰 `--wid` 内嵌承载窗口。
+- `smoke_test.js` 新增 5 个用例，共 **36/36** 通过。
+
 ### v1.12.0
 - **直播画面内嵌到壳内播放区，不再弹出 mpv 独立窗口**：改用 mpv 的 `--wid=<HWND>` 把视频窗口挂成 Electron 原生子窗口，承载窗口尺寸/位置与播放区实时对齐（跟随主窗口移动、缩放、最大化）。实现要点：
   - **承载窗口必须 `transparent: true` 且绝不能 `loadURL`**。一旦加载任何页面，Chromium 会在承载窗口里创建 `Chrome_RenderWidgetHostHWND` 渲染层，它会盖住 mpv 的原生子窗口 → 播放区全黑。用 4 变体并行对照（A 普通 / B 透明+about:blank / C 透明+不加载 / D 离屏）实测确认：**只有「透明 + 不加载任何 URL」能让 mpv 视频窗口直接可见**。
