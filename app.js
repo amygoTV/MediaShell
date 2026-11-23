@@ -837,12 +837,29 @@ async function fetchDetail(site, id) {
   const key = site.key + '|' + id;
   const hit = detailCache.get(key);
   if (hit && Date.now() - hit.at < DETAIL_TTL) return hit.v;
+  // v1.13.4：苹果CMS 详情参数是 ids，不是 id。
+  // 实测用 id= 时站点会直接忽略该参数、返回首页最新 20~30 条 → 取 list[0] 拿到的是
+  // 完全不相干的第一条（实测「极品仙侠学院」点进去显示「代考风暴」）。
+  // 因此主用 ids，并对返回的 vod_id 做一致性校验；ids 不支持时再回退 id。
+  const pick = (d, want) => {
+    const L = Array.isArray(d && d.list) ? d.list : [];
+    if (!L.length) return null;
+    // 优先精确匹配请求的 id，匹配不到再退而取第一条（部分站 id 类型不一致）
+    return L.find((v) => String(v.vod_id) === String(want)) || L[0];
+  };
+  try {
+    const d = await cmsGet(join(apiBase(site), { ac: 'videolist', ids: id }), 8000);
+    const v = pick(d, id);
+    if (v) { detailCache.set(key, { v, at: Date.now() }); return v; }
+  } catch (e) {}
+  // 回退：个别站只认 id
   try {
     const d = await cmsGet(join(apiBase(site), { ac: 'videolist', id }), 8000);
-    const v = (d.list || [])[0];
-    if (v) detailCache.set(key, { v, at: Date.now() });
-    return v;
-  } catch (e) { return null; }
+    const v = pick(d, id);
+    // 只有精确匹配 id 才算成功，否则说明站点忽略了参数，返回的是首页数据
+    if (v && String(v.vod_id) === String(id)) { detailCache.set(key, { v, at: Date.now() }); return v; }
+  } catch (e) {}
+  return null;
 }
 
 // 悬停海报时后台预取详情（节流 220ms，避免划过时打爆接口）
@@ -860,7 +877,16 @@ async function openDetail(site, id, fallbackName) {
     return;
   }
   c.innerHTML = '<div class="empty"><span class="spinner"></span>加载详情…</div>';
-  const v = (await fetchDetail(site, id)) || { vod_id: id, vod_name: fallbackName };
+  const v = await fetchDetail(site, id);
+  if (!v) {
+    // v1.13.4：详情取不到（站点异常/不兼容 ids 参数）时明确提示，
+    // 绝不再拿首页最新一条冒充 —— 否则会出现「点进去的片子跟海报对不上」。
+    c.innerHTML = '<div class="crumb">‹ 返回列表</div><div class="empty">「' + esc(fallbackName || id) +
+      '」的详情加载失败<br><span class="muted">该站点可能暂时异常，或不兼容详情接口，可换其它站点重试</span></div>';
+    const cr = $('.crumb');
+    if (cr) cr.onclick = () => { if (state.view === 'search') renderSearch(); else renderHome(); };
+    return;
+  }
   renderDetail(site, v, fallbackName, id);
 }
 

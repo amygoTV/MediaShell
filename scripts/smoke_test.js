@@ -581,6 +581,31 @@ t('v1.13.3: 直播 .live-tools 下方布局无 absolute 覆盖', () => {
   }
 });
 
+t('v1.13.4: 详情接口用 ids 而非 id（id 会被站点忽略返回首页首条）', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const start = app.indexOf('async function fetchDetail');
+  const end = app.indexOf('\n// 悬停海报时后台预取详情', start);
+  const body = app.slice(start, end);
+  if (!/ac:\s*'videolist',\s*ids:\s*id/.test(body)) throw new Error('fetchDetail 未使用 ids 参数');
+  if (!/ac:\s*'videolist',\s*id\s*[,}]/.test(body)) throw new Error('缺少 id 参数回退');
+  // 必须校验返回的 vod_id 与请求一致，否则会拿模糊匹配/首页数据冒充
+  if (!/String\(v\.vod_id\)\s*===\s*String\(id\)/.test(body)) {
+    throw new Error('未校验返回 vod_id 与请求 id 一致');
+  }
+  if (!/L\.find\(\(v\)\s*=>\s*String\(v\.vod_id\)\s*===\s*String\(want\)\)/.test(body)) {
+    throw new Error('未优先精确匹配请求的 vod_id');
+  }
+});
+t('v1.13.4: 详情失败明确提示，不用首页数据冒充（避免点进去对不上）', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const start = app.indexOf('async function openDetail');
+  const end = app.indexOf('\nfunction renderDetail', start);
+  const body = app.slice(start, end);
+  // 不能再有 || { vod_id: id, vod_name: fallbackName } 这种兜底（会显示错片）
+  if (/\|\|\s*\{\s*vod_id:\s*id/.test(body)) throw new Error('仍在用首页数据冒充详情');
+  if (!/详情加载失败/.test(body)) throw new Error('详情失败缺明确提示');
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;
