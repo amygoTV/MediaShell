@@ -606,6 +606,73 @@ t('v1.13.4: 详情失败明确提示，不用首页数据冒充（避免点进�
   if (!/详情加载失败/.test(body)) throw new Error('详情失败缺明确提示');
 });
 
+t('v1.13.5: 右下角浮层窗口存在，贴播放区右下角且层级高于承载窗口', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  if (!/function ensureOverlay\(/.test(main)) throw new Error('缺 ensureOverlay');
+  if (!/function syncOverlayBounds\(/.test(main)) throw new Error('缺 syncOverlayBounds');
+  if (!/function showOverlay\(/.test(main)) throw new Error('缺 showOverlay');
+  // 浮层必须贴在播放区右下角：右/下各留 margin，且用播放区宽高定位
+  if (!/OVERLAY_W/.test(main) || !/OVERLAY_MARGIN/.test(main)) throw new Error('缺浮层尺寸/边距常量');
+  if (!/rect\.width\)\s*-\s*OVERLAY_W\s*-\s*OVERLAY_MARGIN/.test(main)) throw new Error('浮层未按播放区宽度右对齐');
+  if (!/rect\.height\)\s*-\s*OVERLAY_H\s*-\s*OVERLAY_MARGIN/.test(main)) throw new Error('浮层未按播放区高度底对齐');
+  // 层级：alwaysOnTop 才能压在承载窗口（原生 mpv 子窗口）之上
+  if (!/overlayWin\.setAlwaysOnTop\(true, 'screen-float'\)/.test(main)) throw new Error('浮层未置顶');
+  if (!/parent: win/.test(main)) throw new Error('浮层未 parent 到主窗口（会浮到其它应用上）');
+  // 浮层页面必须存在
+  const ov = path.join(ROOT, 'overlay.html');
+  if (!fs.existsSync(ov)) throw new Error('缺 overlay.html 浮层页面');
+  const html = fs.readFileSync(ov, 'utf8');
+  if (!/btnFull/.test(html) || !/btnPip/.test(html)) throw new Error('浮层缺全屏/小窗按钮');
+  if (!/live-overlay-action/.test(html)) throw new Error('浮层按钮未通过 IPC 通知主窗口');
+});
+t('v1.13.5: 浮层生命周期：播放时显示、停播/小窗时隐藏、退出时销毁', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  // live-embed 成功后显示
+  if (!/showOverlay\(true\)/.test(main)) throw new Error('播放成功未显示浮层');
+  // closeEmbed 隐藏
+  const ce = main.slice(main.indexOf('function closeEmbed'), main.indexOf('function setEmbedPip'));
+  if (!/showOverlay\(false\)/.test(ce)) throw new Error('停播未隐藏浮层');
+  // 小窗切换：进小窗隐藏、出小窗恢复
+  const pip = main.slice(main.indexOf('function setEmbedPip'), main.indexOf("ipcMain.handle('live-embed-pip'"));
+  if (!/showOverlay\(false\)/.test(pip)) throw new Error('进小窗未隐藏浮层');
+  if (!/showOverlay\(true\)/.test(pip)) throw new Error('出小窗未恢复浮层');
+  // 退出必须销毁浮层，否则 window-all-closed 不触发 → 应用变僵尸进程
+  const bq = main.slice(main.indexOf("app.on('before-quit'"));
+  if (!/overlayWin\.destroy\(\)/.test(bq)) throw new Error('退出时未销毁浮层窗口');
+});
+t('v1.13.5: 渲染层接收浮层动作，区外工具栏仅作兜底', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  if (!/MS\.onLiveOverlayAction/.test(app)) throw new Error('渲染层未订阅浮层动作');
+  if (!/action === 'fullscreen'/.test(app) || !/action === 'pip'/.test(app)) throw new Error('浮层动作未映射到全屏/小窗');
+  if (!/function liveSetToolsFallback\(/.test(app)) throw new Error('缺区外兜底工具栏显隐函数');
+  // 区外工具栏默认带 off 类（浮层可用时隐藏）
+  if (!/class="live-tools off"/.test(app)) throw new Error('区外工具栏未默认隐藏');
+  const pre = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
+  if (!/onLiveOverlayAction/.test(pre)) throw new Error('preload 未暴露浮层动作通道');
+});
+
+t('v1.13.5: live-embed 时先记 lastEmbedRect，否则浮层定位拿到 null 停在默认位置', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const start = main.indexOf("ipcMain.handle('live-embed'");
+  const end = main.indexOf("\n// 主窗口移动/缩放", start);
+  const body = main.slice(start, end > 0 ? end : undefined);
+  if (!/lastEmbedRect\s*=\s*rect/.test(body)) throw new Error('live-embed 未记录 lastEmbedRect');
+  // 只看代码行（跳过注释），否则注释里出现的 showOverlay(true) 会误判顺序
+  const code = body.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const iRect = code.indexOf('lastEmbedRect = rect');
+  const iShow = code.indexOf('showOverlay(true)');
+  if (iShow < 0) throw new Error('live-embed 未显示浮层');
+  if (iRect < 0 || iRect > iShow) throw new Error('lastEmbedRect 赋值必须早于 showOverlay(true)');
+});
+t('v1.13.5: 浮层专项自测脚本存在且覆盖定位/层级/IPC 三项', () => {
+  const p = path.join(ROOT, 'tools', 'overlay_probe.js');
+  if (!fs.existsSync(p)) throw new Error('缺 tools/overlay_probe.js 浮层专项自测');
+  const s = fs.readFileSync(p, 'utf8');
+  if (!/setAlwaysOnTop\(true, 'screen-float'\)/.test(s)) throw new Error('自测未校验层级');
+  if (!/setBounds/.test(s)) throw new Error('自测未校验定位');
+  if (!/live-overlay-action/.test(s)) throw new Error('自测未校验 IPC 通路');
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;

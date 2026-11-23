@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('MediaShell', {
   liveEmbedQuery: (prop) => ipcRenderer.invoke('live-embed-query', prop),
   liveEmbedInfo: () => ipcRenderer.invoke('live-embed-info'),
   liveEmbedPip: (on) => ipcRenderer.invoke('live-embed-pip', on),
+  // v1.13.5：右下角浮层按钮 → 主窗口渲染层（'fullscreen' | 'pip'）
+  onLiveOverlayAction: (cb) => {
+    if (typeof cb !== 'function') return;
+    ipcRenderer.on('live-overlay-action', (_e, action) => { try { cb(action); } catch (err) {} });
+  },
   proxyUrl: (url) => ipcRenderer.invoke('proxy-url', url),
   proxyBulk: (urls) => ipcRenderer.invoke('proxy-bulk', urls),
   probeStream: (url) => ipcRenderer.invoke('probe-stream', url),

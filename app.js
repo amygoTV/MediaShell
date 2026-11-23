@@ -1711,7 +1711,9 @@ function renderLive() {
           '<span class="live-state-chip hidden" id="liveStateChip"></span>' +
         '</div>' +
         // v1.13.1：播放区被原生 mpv 子窗口盖住，区内 DOM 不可见 → 全屏/小窗按钮必须放区外
-        '<div class="live-tools" id="liveTools">' +
+        // v1.13.5：按钮改到「画面右下角」的独立浮层窗口（浮在画面上），
+        // 这里这份区外工具栏仅作浮层不可用时的兜底，默认隐藏（.off）。
+        '<div class="live-tools off" id="liveTools">' +
           '<button id="btnLiveFullscreen" class="mini-btn" title="全屏播放（或双击画面，Esc 退出）">⛶ 全屏</button>' +
           '<button id="btnLivePiP" class="mini-btn" title="画中画：把画面缩到右下角悬浮">⧉ 小窗</button>' +
         '</div>' +
@@ -2004,6 +2006,13 @@ async function liveTogglePiP() {
     await v.requestPictureInPicture();
   } catch (e) { toast('小窗播放失败：' + (e && e.message || e)); }
 }
+// v1.13.5：区外兜底工具栏的显隐。
+// 浮层（画面右下角）可用时隐藏区外那份；浮层创建失败时显示出来兜底。
+function liveSetToolsFallback(show) {
+  const t = $('#liveTools');
+  if (t) t.classList.toggle('off', !show);
+}
+
 function bindLiveControls() {
   const screen = $('#liveScreen'); const v = $('#liveVideo');
   if (!screen || !v) return;
@@ -2018,6 +2027,14 @@ function bindLiveControls() {
   });
   const bf = $('#btnLiveFullscreen'); if (bf) bf.onclick = (e) => { e.stopPropagation(); liveToggleFullscreen(); };
   const bp = $('#btnLivePiP'); if (bp) bp.onclick = (e) => { e.stopPropagation(); liveTogglePiP(); };
+  // v1.13.5：右下角浮层窗口的按钮 → 主进程转发过来 → 执行对应动作。
+  // 浮层是独立 BrowserWindow，鼠标事件到不了本页，必须走 IPC。
+  if (MS.onLiveOverlayAction) {
+    MS.onLiveOverlayAction((action) => {
+      if (action === 'fullscreen') liveToggleFullscreen();
+      else if (action === 'pip') liveTogglePiP();
+    });
+  }
   // 播放中隐藏中央图标；暂停时短暂闪现（不常驻）
   v.addEventListener('play', () => { const cp = $('#liveCenterPlay'); if (cp) cp.classList.add('hidden'); });
   v.addEventListener('pause', () => { if (liveState.playing) liveFlashIcon(true); });
@@ -2064,6 +2081,8 @@ function livePlayChannel(ch, lineIdx, tried) {
       liveState.playing = true;
       liveState.paused = false;
       liveState.fullscreen = false;
+      // v1.13.5：浮层可用 → 隐藏区外兜底工具栏；浮层创建失败 → 显示区外那份
+      liveSetToolsFallback(!(r && r.overlay));
       const panel = $('.live-external-panel');
       if (panel) panel.classList.add('hidden');
       liveUpdateStateChip(false);

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>MediaShell Live Overlay</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  /* 浮层容器：右下角贴边，横向排两个按钮 */
+  #bar {
+    position: absolute; right: 0; bottom: 0;
+    display: flex; gap: 8px; align-items: center;
+    padding: 8px 10px;
+  }
+  button {
+    display: flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, .26);
+    background: rgba(16, 20, 28, .72);
+    color: #eef1f7;
+    font-size: 13px; font-weight: 500; letter-spacing: .3px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    -webkit-app-region: no-drag;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+  button:hover { background: rgba(255, 92, 122, .82); border-color: rgba(255,255,255,.5); color: #fff; }
+  button:active { transform: scale(.96); }
+  button .ic { font-size: 14px; line-height: 1; }
+  /* 隐藏时整体不可见（配合 display:none 由主进程控制） */
+  #bar.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <button id="btnFull" title="全屏播放（或双击画面，Esc 退出）"><span class="ic">⛶</span>全屏</button>
+    <button id="btnPip"  title="画中画：把画面缩到右下角悬浮"><span class="ic">⧉</span>小窗</button>
+  </div>
+  <script>
+    // 浮层按钮 → 通知主窗口渲染层执行对应动作。
+    // 用 ipcRenderer.send 而非 invoke：这里是纯事件通知，不需要返回值。
+    const send = (action) => {
+      try { require('electron').ipcRenderer.send('live-overlay-action', action); } catch (e) {}
+    };
+    document.getElementById('btnFull').addEventListener('click', (e) => { e.stopPropagation(); send('fullscreen'); });
+    document.getElementById('btnPip').addEventListener('click', (e) => { e.stopPropagation(); send('pip'); });
+    // 双击浮层空白处不穿透给主窗口，避免误触发播放区暂停
+    document.addEventListener('mousedown', (e) => e.stopPropagation());
+  </script>
+</body>
+</html>

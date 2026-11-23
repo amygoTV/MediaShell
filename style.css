@@ -207,8 +207,11 @@ body.light .live-external{background:radial-gradient(circle at 50% 40%, #eef2fb 
 .live-state-chip{font-size:12px; color:#fff; background:var(--accent); border-radius:20px;
   padding:3px 12px; line-height:1.6; white-space:nowrap;}
 .live-msg-inline.hidden,.live-state-chip.hidden{display:none;}
-/* v1.13.1：播放区外的全屏/小窗工具栏（mpv 原生子窗口会盖住区内 DOM，按钮只能放区外） */
+/* v1.13.1：播放区外的全屏/小窗工具栏（mpv 原生子窗口会盖住区内 DOM，按钮只能放区外）
+   v1.13.5：按钮已移到「画面右下角」的独立浮层窗口，这里默认隐藏；
+   浮层不可用时（如创建失败）由 JS 去掉 .off 类回退到区外显示。 */
 .live-tools{display:flex; gap:8px; align-items:center; margin:8px 0 4px;}
+.live-tools.off{display:none;}
 .live-tools .mini-btn{min-width:82px;}
 .live-lines{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
 .live-line{background:var(--panel2); border:1px solid var(--line); color:var(--text);

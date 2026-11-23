@@ -751,6 +751,7 @@ function closeEmbed() {
     embedPip = false;
     try { w.destroy(); } catch (e) {}
   }
+  showOverlay(false);   // v1.13.5：停播 → 收起右下角浮层
 }
 
 // v1.13.1：画中画（小窗）状态。Windows 上 Electron 不能改已有窗口的 parent，
@@ -772,11 +773,13 @@ function setEmbedPip(on) {
       embedCarrier.setAlwaysOnTop(true, 'screen-float');
       embedCarrier.showInactive();
       embedPip = true;
+      showOverlay(false);        // v1.13.5：画面已飞到屏幕右下角，浮层收起避免遮挡/错位
     } else if (!on && embedPip) {
       embedCarrier.setAlwaysOnTop(false);
       if (embedPipBounds) embedCarrier.setBounds(embedPipBounds);
       embedPip = false;
       embedPipBounds = null;
+      showOverlay(true);         // v1.13.5：退出小窗 → 浮层回到播放区右下角
     }
     return { ok: true, pip: embedPip };
   } catch (e) { return { error: String(e && e.message || e) }; }
@@ -827,6 +830,12 @@ ipcMain.handle('live-embed', async (_e, playerKey, url, decodeMode, rect) => {
   if (!rect || !rect.width || !rect.height) return { error: '播放区尺寸无效' };
 
   closeEmbed();
+  // v1.13.5：把播放区矩形记下来。
+  // 浮层定位依赖 lastEmbedRect，而它原本只在渲染层上报 live-embed-rect 时才赋值；
+  // 首次播放的时序是「先 live-embed(带 rect) → 后 live-embed-rect」，
+  // 若不在这里先存一份，showOverlay(true) 定位时 lastEmbedRect 仍是 null，
+  // 浮层会停在默认位置（实测偏到主窗口左上角附近）。
+  lastEmbedRect = rect;
   const carrier = ensureEmbedCarrier(rect);
   try { carrier.showInactive(); } catch (e) { try { carrier.show(); } catch (e2) {} }
 
@@ -894,7 +903,9 @@ ipcMain.handle('live-embed', async (_e, playerKey, url, decodeMode, rect) => {
         ' exe=' + exe + '\n  args=' + args.join(' ') + '\n', 'utf8');
     } catch (e) {}
     child.on('exit', () => { if (embedChild === child) embedChild = null; });
-    return { ok: true, exe, embedded: true };
+    // v1.13.5：播放起来了 → 把「全屏/小窗」浮层显示到画面右下角
+    const overlayOk = showOverlay(true);
+    return { ok: true, exe, embedded: true, overlay: overlayOk };
   } catch (err) { closeEmbed(); return { error: String(err && err.message || err) }; }
 });
 
@@ -911,8 +922,80 @@ function syncEmbedCarrier() {
       width: Math.round(rect.width), height: Math.round(rect.height),
     });
   } catch (e) {}
+  syncOverlayBounds();   // v1.13.5：浮层贴着播放区右下角，主窗口移动时一起跟
 }
 let lastEmbedRect = null;
+
+// v1.13.5：直播「全屏/小窗」按钮浮到画面右下角。
+// 难点：承载窗口（embedCarrier）尺寸恰好等于播放区矩形，原生 mpv 子窗口画在上面，
+// 因此播放区内的一切 DOM 都被原生窗口盖住 —— 区内放按钮看不见（v1.13.1 的坑）。
+// 方案：另开一个「浮层窗口」overlayWin，只装两个按钮，贴在播放区右下角。
+//   · parent: win → owned window，只浮在主窗口之上，不会盖住其它应用；
+//   · alwaysOnTop('screen-float') → 层级高于同为 owned 的承载窗口，能压在画面上；
+//   · transparent + 无边框 → 只有按钮那两块可见，其余透出下面的画面。
+// 位置随播放区几何变化同步（live-embed-rect 上报时一并更新）。
+let overlayWin = null;
+const OVERLAY_W = 196, OVERLAY_H = 50, OVERLAY_MARGIN = 12;
+
+function ensureOverlay() {
+  if (overlayWin && !overlayWin.isDestroyed()) return overlayWin;
+  try {
+    overlayWin = new BrowserWindow({
+      width: OVERLAY_W, height: OVERLAY_H,
+      frame: false, transparent: true, backgroundColor: '#00000000',
+      show: false, skipTaskbar: true, hasShadow: false,
+      resizable: false, movable: false, minimizable: false, maximizable: false,
+      fullscreenable: false, focusable: false, roundedCorners: false,
+      parent: win,
+      webPreferences: {
+        contextIsolation: false, nodeIntegration: true,
+        backgroundThrottling: false,
+      },
+    });
+    overlayWin.setAlwaysOnTop(true, 'screen-float');
+    overlayWin.loadFile(path.join(APP_DIR, 'overlay.html'));
+    overlayWin.on('closed', () => { overlayWin = null; });
+  } catch (e) { overlayWin = null; }
+  return overlayWin;
+}
+
+// 把浮层贴到播放区右下角（屏幕坐标）。播放区矩形来自渲染层上报的 relX/relY/width/height。
+function syncOverlayBounds() {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  const rect = lastEmbedRect;
+  if (!rect || !rect.width || !rect.height) return;
+  try {
+    // 保险：每次同步都重新提一次层级。承载窗口若被重建（几何剧变等边缘情况），
+    // 浮层可能掉到它下面去，重新 setAlwaysOnTop 可把浮层拉回最上层。
+    overlayWin.setAlwaysOnTop(true, 'screen-float');
+    const cb = win.getContentBounds();
+    const px = Math.round(cb.x + rect.relX);
+    const py = Math.round(cb.y + rect.relY);
+    const x = px + Math.round(rect.width) - OVERLAY_W - OVERLAY_MARGIN;
+    const y = py + Math.round(rect.height) - OVERLAY_H - OVERLAY_MARGIN;
+    overlayWin.setBounds({ x, y, width: OVERLAY_W, height: OVERLAY_H });
+  } catch (e) {}
+}
+
+// 显示/隐藏浮层。小窗（pip）模式下画面已飞到屏幕右下角，浮层无意义 → 隐藏。
+// 返回浮层是否可用（创建失败时渲染层回退到区外工具栏）。
+function showOverlay(on) {
+  try {
+    if (!on) { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.hide(); return false; }
+    const w = ensureOverlay();
+    if (!w) return false;
+    syncOverlayBounds();
+    w.showInactive();   // 不抢主窗口焦点
+    return true;
+  } catch (e) { return false; }
+}
+
+// 浮层按钮点击 → 转发给主窗口渲染层执行对应动作
+ipcMain.on('live-overlay-action', (_e, action) => {
+  try { if (win && !win.isDestroyed()) win.webContents.send('live-overlay-action', action); }
+  catch (e) {}
+});
+
 // 渲染进程上报播放区相对主窗口客户区左上角的偏移与尺寸
 ipcMain.on('live-embed-rect', (_e, rect) => {
   lastEmbedRect = rect;
@@ -925,6 +1008,7 @@ ipcMain.on('live-embed-rect', (_e, rect) => {
       width: Math.round(rect.width), height: Math.round(rect.height),
     });
   } catch (e) {}
+  syncOverlayBounds();
 });
 
 // 主动停止内嵌播放（切台/离开直播页/退出）
@@ -1184,6 +1268,11 @@ app.on('before-quit', () => {
   killExternalPlayer();
   // v1.12：同时销毁内嵌承载窗口与内嵌的 mpv
   try { closeEmbed(); } catch (e) {}
+  // v1.13.5：销毁右下角浮层窗口。
+  // ⚠️ 必须显式销毁：浮层是独立 BrowserWindow，若残留则 window-all-closed 永不触发，
+  // 主窗口关掉后应用会变成「看不见但进程还在」的僵尸状态。
+  try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.destroy(); } catch (e) {}
+  overlayWin = null;
   if (proxyServer) { try { proxyServer.close(); } catch (e) {} }
 });
 
