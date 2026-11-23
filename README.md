@@ -4,6 +4,11 @@
 
 ## 版本
 
+### v1.13.1
+- **修复直播页「全屏 / 小窗」按钮消失**：v1.12 做 mpv 内嵌时把播放区内的按钮全移走（原生 mpv 子窗口会盖住区内 DOM），但区外没补回来——`bindLiveControls()` 绑定的 `#btnLiveFullscreen`/`#btnLivePiP` 在 HTML 里根本不存在，等于绑了个空气。本次在播放区**下方**（区外、不会被原生窗口盖住）新增一行工具栏放这两个按钮。
+- **小窗改成真正的画中画**：内嵌 mpv 下 `#liveVideo` 是隐藏的、没在播，HTML video PiP 用不了。改为主进程把 mpv 的**承载窗口置顶 + 缩到屏幕右下角**（480×270），mpv 子窗口跟着缩放、画面连续不重启；再点「小窗」还原。小窗期间暂停播放区坐标同步，避免主窗口移动把小窗拉回；全屏时若在小窗模式会先自动还原。
+- `smoke_test.js` 新增小窗用例，共 **37/37** 通过；store 11/11。
+
 ### v1.13.0
 - **点播播放器换成 ArtPlayer 5.4（参考 TVBox Desktop 的内置播放器）**：原生 `<video>` + 自写控制条改为 ArtPlayer，获得完整控制栏（播放/进度/时间/音量/网页全屏/全屏）+ 设置菜单（倍速/画面比例/翻转）+ 快捷键（空格暂停、方向键快进/音量）+ 右键菜单（含「打开系统播放器」）。弹幕层、选集切换、观看进度写历史、右上角系统播放器按钮全部保留；旧自写控制条隐藏但代码保留可回退。新增依赖 `vendor/artplayer.min.js`（134KB，本地打包不依赖 CDN）。
 - **HLS 加载优化（移植 TVBox `makeM3u8Loader`）**：`abrEwmaDefaultEstimate=4e6`（多档源不再从最低码率起播糊好几秒）；`MANIFEST_PARSED` 时按 `height*1e6+bitrate` 手动选最高档，起播即高清；fatal 错误分级恢复（网络错误 `startLoad()`、媒体错误 `recoverMediaError()`，限 2 次）；`xhrSetup` 注入 Referer 应对采集站防盗链。保留原有「大缓冲抗抖动」（maxBufferLength 24 / maxMaxBufferLength 60）。

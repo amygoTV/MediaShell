@@ -1339,6 +1339,7 @@ let liveState = {
   embedded: false,  // v1.12：当前是否以内嵌方式播放（mpv 挂在壳内播放区）
   paused: false,    // 内嵌播放的暂停状态
   fullscreen: false,// 内嵌播放的全屏状态
+  pip: false,       // v1.13.1：内嵌播放是否处于画中画（小窗）模式
   // v1.13：线路健康缓存（参考 TVBox live-health.json），按 URL 存 {ok, ts}，避免每次进直播页全量重探
   health: loadLS('ms_live_health_v1', {}),
 };
@@ -1624,6 +1625,11 @@ function renderLive() {
           '<span id="liveMsg" class="live-msg-inline">点左侧频道，即在下方播放区用 mpv 硬解播放（不弹窗）</span>' +
           '<span class="live-state-chip hidden" id="liveStateChip"></span>' +
         '</div>' +
+        // v1.13.1：播放区被原生 mpv 子窗口盖住，区内 DOM 不可见 → 全屏/小窗按钮必须放区外
+        '<div class="live-tools" id="liveTools">' +
+          '<button id="btnLiveFullscreen" class="mini-btn" title="全屏播放（或双击画面，Esc 退出）">⛶ 全屏</button>' +
+          '<button id="btnLivePiP" class="mini-btn" title="画中画：把画面缩到右下角悬浮">⧉ 小窗</button>' +
+        '</div>' +
         '<div class="live-lines" id="liveLines"></div>' +
         '<div class="live-hint" id="liveHint">直播画面直接显示在本页播放区内（mpv 硬解、不弹窗）。同名频道的多条线路在上方切换。</div>' +
       '</section>' +
@@ -1787,6 +1793,9 @@ function liveStop() {
   liveState.embedded = false;
   liveState.paused = false;
   liveState.fullscreen = false;
+  // v1.13.1：离开/切台时也复位小窗状态（承载窗口会被销毁，主进程 embedPip 同步归零）
+  if (liveState.pip) { try { if (MS.liveEmbedPip) MS.liveEmbedPip(false); } catch (e) {} }
+  liveState.pip = false;
   const v = $('#liveVideo');
   if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
   if (liveState.hls) { try { liveState.hls.destroy(); } catch (e) {} liveState.hls = null; }
@@ -1821,7 +1830,8 @@ function liveUpdateStateChip(paused) {
   if (!liveState.playing || !liveState.embedded) { chip.classList.add('hidden'); chip.textContent = ''; return; }
   chip.classList.remove('hidden');
   const fs = liveState.fullscreen ? ' · 全屏' : '';
-  chip.textContent = paused ? '⏸ 已暂停（单击画面恢复）' : '▶ 播放中 · mpv 硬解内嵌' + fs;
+  const pip = liveState.pip ? ' · ⧉小窗' : '';
+  chip.textContent = paused ? '⏸ 已暂停（单击画面恢复）' : '▶ 播放中 · mpv 硬解内嵌' + fs + pip;
 }
 
 // 轮询内嵌 mpv 的真实状态：全屏/暂停由 mpv 自己说了算（比如用户按 ESC 退全屏），
@@ -1858,6 +1868,11 @@ function liveTogglePlay() {
   else { v.pause(); liveFlashIcon(true); }
 }
 function liveToggleFullscreen() {
+  // v1.13.1：小窗模式下先还原到播放区再全屏，避免对悬浮小窗发全屏导致画面异常
+  if (liveState.pip && MS.liveEmbedPip) {
+    MS.liveEmbedPip(false).then(() => { liveState.pip = false; liveToggleFullscreen(); });
+    return;
+  }
   // v1.12 内嵌模式：全屏交给 mpv（它会把画面撑满整个屏幕）
   if (liveState.embedded && MS.liveEmbedCmd) {
     const fs = !!(document.fullscreenElement || liveState.fullscreen);
@@ -1884,7 +1899,20 @@ function liveToggleFullscreen() {
   } catch (e) { toast('全屏切换失败：' + (e && e.message || e)); }
 }
 async function liveTogglePiP() {
-  const v = $('#liveVideo'); if (!v) return;
+  // v1.13.1：内嵌 mpv 模式下 #liveVideo 是隐藏的、根本没在播，HTML video PiP 不可用。
+  // 改为让主进程把 mpv 的承载窗口置顶 + 缩到右下角（画面连续、不重启 mpv）。
+  if (liveState.embedded && MS.liveEmbedPip) {
+    try {
+      const r = await MS.liveEmbedPip(!liveState.pip);
+      if (r && r.error) { toast('小窗切换失败：' + r.error); return; }
+      liveState.pip = !!(r && r.pip != null ? r.pip : !liveState.pip);
+      toast(liveState.pip ? '已切到小窗（右下角悬浮，再点「小窗」还原）' : '已退出小窗，画面回到播放区');
+      liveUpdateStateChip(liveState.paused);
+    } catch (e) { toast('小窗切换失败：' + (e && e.message || e)); }
+    return;
+  }
+  // 非内嵌（独立播放器/内置 video）才走 HTML PiP 兜底
+  const v = $('#liveVideo'); if (!v || !v.src) { toast('请先开始播放，再用小窗'); return; }
   try {
     if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
     if (!document.pictureInPictureEnabled) { toast('当前环境不支持小窗播放'); return; }

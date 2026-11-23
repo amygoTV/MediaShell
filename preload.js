@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('MediaShell', {
   liveEmbedCmd: (cmd) => ipcRenderer.invoke('live-embed-cmd', cmd),
   liveEmbedQuery: (prop) => ipcRenderer.invoke('live-embed-query', prop),
   liveEmbedInfo: () => ipcRenderer.invoke('live-embed-info'),
+  liveEmbedPip: (on) => ipcRenderer.invoke('live-embed-pip', on),
   proxyUrl: (url) => ipcRenderer.invoke('proxy-url', url),
   proxyBulk: (urls) => ipcRenderer.invoke('proxy-bulk', urls),
   probeStream: (url) => ipcRenderer.invoke('probe-stream', url),

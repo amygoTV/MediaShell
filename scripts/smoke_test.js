@@ -90,6 +90,11 @@ const MS = {
   playExternal: async () => ({ ok: true }),
   stopExternal: async () => ({ ok: true }),
   proxyUrl: async (u) => u,
+  liveEmbedCmd: async () => ({ ok: true }),
+  liveEmbedStop: async () => ({ ok: true }),
+  liveEmbedQuery: async () => ({ value: false }),
+  liveEmbedRect: () => {},
+  liveEmbedPip: async (on) => ({ ok: true, pip: !!on }),
 };
 
 const localStorageStub = {
@@ -500,6 +505,24 @@ t('v1.13 失败自动换线: 标记坏线并选下一条 good 线路', () => {
       resolve();
     }, 400);
   });
+});
+
+t('v1.13.1: 内嵌模式小窗切换走 liveEmbedPip IPC 并维护 pip 状态', () => {
+  const st = sandbox.window.__msSelfTest;
+  const ls = st.liveState;
+  const calls = [];
+  const oldPipApi = MS.liveEmbedPip, oldEmb = ls.embedded, oldPip = ls.pip, oldPlaying = ls.playing;
+  MS.liveEmbedPip = (on) => { calls.push(on); return Promise.resolve({ ok: true, pip: !!on }); };
+  ls.embedded = true; ls.playing = true; ls.pip = false;
+  const restore = () => { MS.liveEmbedPip = oldPipApi; ls.embedded = oldEmb; ls.pip = oldPip; ls.playing = oldPlaying; };
+  return st.liveTogglePiP().then(() => {
+    if (!calls.length || calls[0] !== true) throw new Error('进入小窗未调 liveEmbedPip(true): ' + JSON.stringify(calls));
+    if (ls.pip !== true) throw new Error('pip 状态未置 true');
+    return st.liveTogglePiP();
+  }).then(() => {
+    if (calls[1] !== false) throw new Error('退出小窗未调 liveEmbedPip(false): ' + JSON.stringify(calls));
+    if (ls.pip !== false) throw new Error('pip 状态未复位');
+  }).then(restore, (e) => { restore(); throw e; });
 });
 
 chain.then(() => {

@@ -748,9 +748,40 @@ function closeEmbed() {
   if (embedCarrier) {
     const w = embedCarrier;
     embedCarrier = null;
+    embedPip = false;
     try { w.destroy(); } catch (e) {}
   }
 }
+
+// v1.13.1：画中画（小窗）状态。Windows 上 Electron 不能改已有窗口的 parent，
+// 因此对承载窗口做「置顶 + 缩到屏幕右下角」实现悬浮小窗；mpv 子窗口跟着缩放，画面连续。
+let embedPip = false;
+let embedPipBounds = null;
+const PIP_W = 480, PIP_H = 270, PIP_MARGIN = 24;
+function setEmbedPip(on) {
+  if (!embedCarrier || embedCarrier.isDestroyed()) return { error: 'no-carrier' };
+  try {
+    if (on && !embedPip) {
+      // 记住当前播放区位置，退出小窗时还原
+      embedPipBounds = embedCarrier.getBounds();
+      const wa = require('electron').screen.getPrimaryDisplay().workArea;
+      const x = Math.round(wa.x + wa.width - PIP_W - PIP_MARGIN);
+      const y = Math.round(wa.y + wa.height - PIP_H - PIP_MARGIN);
+      embedCarrier.setBounds({ x, y, width: PIP_W, height: PIP_H });
+      // owned window 提升为置顶，脱离主窗口折叠顺序；loadURL 依然禁止（渲染层会盖住 mpv）
+      embedCarrier.setAlwaysOnTop(true, 'screen-float');
+      embedCarrier.showInactive();
+      embedPip = true;
+    } else if (!on && embedPip) {
+      embedCarrier.setAlwaysOnTop(false);
+      if (embedPipBounds) embedCarrier.setBounds(embedPipBounds);
+      embedPip = false;
+      embedPipBounds = null;
+    }
+    return { ok: true, pip: embedPip };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+}
+ipcMain.handle('live-embed-pip', async (_e, on) => setEmbedPip(!!on));
 
 // 依据播放区屏幕坐标重建承载窗口（首次创建或几何变化时）
 // 注意：rect.relX/relY 是相对**主窗口客户区**左上角的偏移（getBoundingClientRect 坐标系），
@@ -870,6 +901,7 @@ ipcMain.handle('live-embed', async (_e, playerKey, url, decodeMode, rect) => {
 // 主窗口移动/缩放 → 同步承载窗口位置
 function syncEmbedCarrier() {
   if (!embedCarrier || embedCarrier.isDestroyed()) return;
+  if (embedPip) return;  // v1.13.1：小窗模式下不跟随主窗口，保持悬浮在右下角
   try {
     const rect = lastEmbedRect;
     if (!rect) return;
@@ -885,6 +917,7 @@ let lastEmbedRect = null;
 ipcMain.on('live-embed-rect', (_e, rect) => {
   lastEmbedRect = rect;
   if (!embedCarrier || embedCarrier.isDestroyed()) return;
+  if (embedPip) return;  // v1.13.1：小窗模式下忽略渲染层的播放区坐标上报
   try {
     const cb = win.getContentBounds();
     embedCarrier.setBounds({
