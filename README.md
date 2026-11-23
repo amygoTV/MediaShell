@@ -4,6 +4,11 @@
 
 ## 版本
 
+### v1.13.2
+- **修复点播播放器初始化失败**（`option.contextmenu.0.html require 'string' or 'Element' type`）：v1.13.0 加右键菜单时只传了 `name`，而 ArtPlayer 的 contextmenu schema 要求 `html`（string|Element）必填，`name` 只是可选显示名——构造函数在 option 校验阶段直接抛错，导致点播完全起不来。改为传 `html: '打开系统播放器'`。
+- **点播「全屏 / 小窗」按钮移到播放区下方**：从顶栏 `player-actions` 移到播放区下方的独立工具栏（`.player-tools`），与直播页布局一致，避免和 ArtPlayer 自带控制栏的全屏按钮重叠。绑定不变。
+- `smoke_test.js` 新增 contextmenu 合法性与按钮位置断言，共 **39/39** 通过。
+
 ### v1.13.1
 - **修复直播页「全屏 / 小窗」按钮消失**：v1.12 做 mpv 内嵌时把播放区内的按钮全移走（原生 mpv 子窗口会盖住区内 DOM），但区外没补回来——`bindLiveControls()` 绑定的 `#btnLiveFullscreen`/`#btnLivePiP` 在 HTML 里根本不存在，等于绑了个空气。本次在播放区**下方**（区外、不会被原生窗口盖住）新增一行工具栏放这两个按钮。
 - **小窗改成真正的画中画**：内嵌 mpv 下 `#liveVideo` 是隐藏的、没在播，HTML video PiP 用不了。改为主进程把 mpv 的**承载窗口置顶 + 缩到屏幕右下角**（480×270），mpv 子窗口跟着缩放、画面连续不重启；再点「小窗」还原。小窗期间暂停播放区坐标同步，避免主窗口移动把小窗拉回；全屏时若在小窗模式会先自动还原。

@@ -525,6 +525,30 @@ t('v1.13.1: 内嵌模式小窗切换走 liveEmbedPip IPC 并维护 pip 状态', 
   }).then(restore, (e) => { restore(); throw e; });
 });
 
+t('v1.13.2: contextmenu 项用 html 字段（ArtPlayer 必填），不用 name 单独传', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  const start = app.indexOf('function playEpisode');
+  const end = app.indexOf('\n// ---- 播放 / 暂停 ----', start);
+  const body = app.slice(start, end);
+  const cm = body.match(/contextmenu\s*:\s*\[([\s\S]*?)\]/);
+  if (!cm) throw new Error('未找到 contextmenu 配置');
+  if (!/html\s*:/.test(cm[1])) throw new Error('contextmenu 缺 html 字段（ArtPlayer 会抛 require string or Element）');
+  // 任何菜单项若只有 name 没有 html 都会炸，粗粒度检查：name 出现次数不得超过 html
+  const names = (cm[1].match(/\bname\s*:/g) || []).length;
+  const htmls = (cm[1].match(/\bhtml\s*:/g) || []).length;
+  if (names > htmls) throw new Error('存在只给 name 未给 html 的菜单项');
+});
+t('v1.13.2: 全屏/小窗按钮在播放区下方工具栏，不在顶栏 player-actions', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const headEnd = html.indexOf('</div>', html.indexOf('class="player-actions"'));
+  const actions = html.slice(html.indexOf('class="player-actions"'), headEnd + 6);
+  if (/btnFullscreen|btnPiP/.test(actions)) throw new Error('全屏/小窗按钮仍在顶栏 player-actions');
+  const tools = html.match(/<div class="player-tools"[^>]*>([\s\S]*?)<\/div>/);
+  if (!tools || !/btnFullscreen/.test(tools[1]) || !/btnPiP/.test(tools[1])) {
+    throw new Error('播放区下方工具栏缺全屏或小窗按钮');
+  }
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;

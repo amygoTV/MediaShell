@@ -286,6 +286,10 @@ body.light .live-external{background:radial-gradient(circle at 50% 40%, #eef2fb 
 .player-msg{position:absolute; color:var(--muted); font-size:14px; text-align:center; line-height:1.8;}
 .player-side{width:250px; flex:0 0 250px; background:var(--panel); border-left:1px solid var(--line);
   display:flex; flex-direction:column; padding:14px 10px;}
+/* v1.13.2：全屏/小窗按钮放到播放区下方区外工具栏（顶栏不放，避免与 ArtPlayer 控制栏重叠） */
+.player-tools{flex:0 0 auto; display:flex; gap:8px; align-items:center; justify-content:flex-start;
+  padding:8px 16px; background:var(--panel); border-top:1px solid var(--line);}
+.player-tools .ghost-btn{min-width:78px;}
 .episode-list{flex:1; overflow-y:auto; display:grid; grid-template-columns:1fr 1fr; gap:6px; align-content:start;}
 
 /* buttons */

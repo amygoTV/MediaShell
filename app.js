@@ -1083,8 +1083,9 @@ function playEpisode(ep, title) {
     hotkey: true,
     fastForward: true,
     lang: 'zh-cn',
+    // ArtPlayer schema 要求 html（string|Element）必填；只给 name 会抛 "html require string or Element"
     contextmenu: [
-      { name: '打开系统播放器', click: () => {
+      { html: '打开系统播放器', click: () => {
           MS.openWithPlayer(url, title).then((r) => toast(r && r.error ? '调用失败' : '已用系统播放器打开'));
         } },
     ],
