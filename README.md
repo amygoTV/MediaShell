@@ -4,6 +4,13 @@
 
 ## 版本
 
+### v1.13.7
+- **修复直播右下角浮层按钮「点了没反应」**：v1.13.5 的浮层窗口设了 `focusable: false`，Windows 会给它加 `WS_EX_NOACTIVATE` 扩展样式，该样式使窗口**不参与鼠标命中测试** → 点击直接穿透到下层，浮层页面收不到任何指针事件（实测 click/down 计数为 0）。改为 `focusable: true` 后点击正常。
+- **顺带修掉监听器累积**：preload 的 `onLiveOverlayAction` 每次调用都 `ipcRenderer.on` 注册新监听且永不移除，而 `bindLiveControls()` 每次进直播页都会调一次 → 监听器越积越多，一次点击触发 N 次切换，偶数次时状态来回切，同样表现为「没反应」。改为**单例订阅**（重复调用先 `removeListener` 再挂）。
+- 新增自动化测试基础设施：`MSHELL_CDP_PORT` 环境变量开启 Chromium 远程调试端口，可用 CDP 驱动真实应用（进直播页、触发播放、读浮层状态）；`scripts/overlay_click_test.py` 用 Win32 `SetCursorPos` + `mouse_event` 做**真实物理点击**（Electron 的 `sendInputEvent` 是进程内注入，绕过 Windows 命中测试，查不出这类问题）；`tools/overlay_click_probe.js` / `overlay_mouse_probe.js` 做浮层链路分段定位。
+- 实测验证：物理点击「⛶ 全屏」→ `liveState.fullscreen=true`、mpv `fullscreen=true`；物理点击「⧉ 小窗」→ `pip=true`、承载窗口缩到右下角 480×270。
+- `smoke_test.js` 新增 3 条断言，共 **55/55** 通过。
+
 ### v1.13.6
 - **修复「光速影视 / 虎牙采集」在应用里全是空的**：实测这两个站的服务端证书是**自签名且已过期**（subject/issuer 均为 `C=cn,ST=sh,...,CN=sh,emailAddress=sh@sh.com`，有效期 2024-04-29 ~ 2025-04-29，已过期约 19 个月）。任何严格校验的客户端都会被拒 —— Node `https` 报 `certificate has expired`、Electron `net` 报 `net::ERR_CERT_AUTHORITY_INVALID`；而 curl/openssl 有时命中 Cloudflare 边缘节点的正规证书，所以「浏览器能开、壳里是空的」。**数据其实还在**（光速 total=119106、虎牙 total=118031）。处理：按域名白名单 `INSECURE_CERT_HOSTS` 跳过证书校验，其余域名仍严格校验，不整体削弱安全性。
 - **顺带修掉 UA 问题**：全项目 8 处都用 `okhttp/3.15` 覆盖了默认浏览器 UA，而**虎牙在该 UA 下直接超时**（Chrome UA 才返回 JSON）。现在在 `httpGet` 里把 `okhttp/3.15` 视为「未指定」统一回落到浏览器 UA，一处改动全局生效。

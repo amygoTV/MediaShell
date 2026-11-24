@@ -699,6 +699,42 @@ t('v1.13.6: 站点连通性自测脚本存在', () => {
   }
 });
 
+t('v1.13.7: 浮层 focusable 必须为 true，否则鼠标点不到按钮（WS_EX_NOACTIVATE 不参与命中测试）', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const start = main.indexOf('function ensureOverlay(');
+  const end = main.indexOf('function syncOverlayBounds(', start);
+  const body = main.slice(start, end);
+  // focusable:false → Windows 给窗口加 WS_EX_NOACTIVATE → 不参与鼠标命中测试 →
+  // 点击穿透到下层，表现为「按钮看得见但点了没反应」（v1.13.7 实测根因）
+  if (/focusable:\s*false/.test(body)) {
+    throw new Error('浮层仍是 focusable:false → 鼠标点不到按钮');
+  }
+  if (!/focusable:\s*true/.test(body)) throw new Error('浮层未显式设置 focusable:true');
+});
+t('v1.13.7: 浮层 IPC 订阅为单例，重复注册不累积（否则一次点击触发多次切换）', () => {
+  const pre = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
+  if (!/let overlayActionHandler\s*=\s*null/.test(pre)) throw new Error('缺单例 handler 变量');
+  // 取**定义处**（不是注释里那次出现）
+  const seg = pre.slice(pre.indexOf('onLiveOverlayAction: (cb)'));
+  if (!/removeListener/.test(seg)) throw new Error('重复订阅未先移除旧监听器');
+  if (!/ipcRenderer\.on\('live-overlay-action'/.test(seg)) throw new Error('未注册监听器');
+  // 渲染层每次进直播页都会调 bindLiveControls → 监听器必须唯一
+  const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  if (!/MS\.onLiveOverlayAction/.test(app)) throw new Error('渲染层未订阅浮层动作');
+});
+t('v1.13.7: 提供 CDP 自动化测试钩子与浮层排障接口', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  if (!/MSHELL_CDP_PORT/.test(main)) throw new Error('缺 CDP 自动化钩子');
+  if (!/remote-debugging-port/.test(main)) throw new Error('未开启远程调试端口');
+  if (!/live-overlay-info/.test(main)) throw new Error('缺浮层排障接口');
+  if (!fs.existsSync(path.join(ROOT, 'scripts', 'overlay_click_test.py'))) {
+    throw new Error('缺 scripts/overlay_click_test.py 真实鼠标点击测试');
+  }
+  for (const f of ['tools/overlay_mouse_probe.js', 'tools/overlay_click_probe.js']) {
+    if (!fs.existsSync(path.join(ROOT, f))) throw new Error('缺 ' + f);
+  }
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;

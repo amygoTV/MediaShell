@@ -1,6 +1,9 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 
+// v1.13.7：浮层动作订阅的单例 handler（避免监听器累积，见 onLiveOverlayAction）
+let overlayActionHandler = null;
+
 contextBridge.exposeInMainWorld('MediaShell', {
   // ---- 用户配置存储（订阅 / 设置 / 备份 / 重置）----
   getSubscription: () => ipcRenderer.invoke('get-subscription'),
@@ -31,11 +34,21 @@ contextBridge.exposeInMainWorld('MediaShell', {
   liveEmbedCmd: (cmd) => ipcRenderer.invoke('live-embed-cmd', cmd),
   liveEmbedQuery: (prop) => ipcRenderer.invoke('live-embed-query', prop),
   liveEmbedInfo: () => ipcRenderer.invoke('live-embed-info'),
+  // v1.13.7：浮层窗口排障（bounds/visible/alwaysOnTop/与承载窗口的重叠关系）
+  liveOverlayInfo: () => ipcRenderer.invoke('live-overlay-info'),
   liveEmbedPip: (on) => ipcRenderer.invoke('live-embed-pip', on),
   // v1.13.5：右下角浮层按钮 → 主窗口渲染层（'fullscreen' | 'pip'）
+  // v1.13.7：原来每次调用都 ipcRenderer.on 注册一个新监听且永不移除，
+  // 而 bindLiveControls() 每次进直播页都会调一次 → 监听器累积，
+  // 一次点击触发 N 次 liveTogglePiP/liveToggleFullscreen → 偶数次时状态来回切，
+  // 表现为「按钮点了没反应」。改为**单例订阅**：重复调用只替换回调，不再叠加监听器。
   onLiveOverlayAction: (cb) => {
     if (typeof cb !== 'function') return;
-    ipcRenderer.on('live-overlay-action', (_e, action) => { try { cb(action); } catch (err) {} });
+    if (overlayActionHandler) {
+      try { ipcRenderer.removeListener('live-overlay-action', overlayActionHandler); } catch (e) {}
+    }
+    overlayActionHandler = (_e, action) => { try { cb(action); } catch (err) {} };
+    ipcRenderer.on('live-overlay-action', overlayActionHandler);
   },
   proxyUrl: (url) => ipcRenderer.invoke('proxy-url', url),
   proxyBulk: (urls) => ipcRenderer.invoke('proxy-bulk', urls),

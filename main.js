@@ -18,6 +18,17 @@ const { URL } = require('url');
 const zlib = require('zlib');
 const { UserStore } = require('./user-store');
 
+// v1.13.7：自动化测试钩子。
+// MSHELL_CDP_PORT=9222 时开启 Chromium 远程调试端口，可用 CDP 驱动真实应用做
+// 端到端验证（进入直播页、触发播放、读浮层状态）。默认不开启，不影响正常用户。
+try {
+  const cdp = parseInt(process.env.MSHELL_CDP_PORT || '', 10);
+  if (cdp > 0) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(cdp));
+    app.commandLine.appendSwitch('remote-allow-origins', '*');
+  }
+} catch (e) {}
+
 // ---- 直播播放性能优化：开启 Chromium 硬件解码/GPU 合成 -------------------
 // 手机端直播不卡而电脑卡，多因 Electron 默认未开启硬解、HLS 走 JS 软解。
 for (const sw of [
@@ -981,7 +992,7 @@ function ensureOverlay() {
       frame: false, transparent: true, backgroundColor: '#00000000',
       show: false, skipTaskbar: true, hasShadow: false,
       resizable: false, movable: false, minimizable: false, maximizable: false,
-      fullscreenable: false, focusable: false, roundedCorners: false,
+      fullscreenable: false, focusable: true, roundedCorners: false,
       parent: win,
       webPreferences: {
         contextIsolation: false, nodeIntegration: true,
@@ -1067,6 +1078,41 @@ ipcMain.handle('live-embed-info', async () => {
       logPath: embedMpvLogPath || null,
     };
   } catch (e) { return { error: String(e && e.message || e) }; }
+});
+
+// v1.13.7：浮层窗口排障接口。
+// 症状「按钮无效」有两种完全不同的根因，必须能区分：
+//   ① 浮层窗口根本没显示 / 位置不对 → 看 bounds/visible
+//   ② 浮层显示了但鼠标点不到 → 看 alwaysOnTop / ignoreMouseEvents / focusable
+// 同时返回 mpv 承载窗口的 ignoreMouseEvents 状态 —— 承载窗口设了鼠标穿透后，
+// 可能连带影响同 owner 的兄弟窗口（浮层）的命中测试。
+ipcMain.handle('live-overlay-info', async () => {
+  const out = { exists: false };
+  try {
+    if (!overlayWin || overlayWin.isDestroyed()) return out;
+    const buf = overlayWin.getNativeWindowHandle();
+    const hwnd = buf && buf.length
+      ? (buf.length >= 8 ? buf.readBigUInt64LE(0) : BigInt(buf.readUInt32LE(0)))
+      : 0n;
+    out.exists = true;
+    out.hwnd = hwnd.toString();
+    out.bounds = overlayWin.getBounds();
+    out.visible = overlayWin.isVisible();
+    out.alwaysOnTop = overlayWin.isAlwaysOnTop();
+    out.focusable = overlayWin.isFocusable();
+    out.opaque = overlayWin.isOpaque();
+    out.lastEmbedRect = lastEmbedRect;
+    out.overlapWithCarrier = (() => {
+      if (!embedCarrier || embedCarrier.isDestroyed()) return null;
+      const a = overlayWin.getBounds(), b = embedCarrier.getBounds();
+      return {
+        overlayInsideCarrier: a.x >= b.x && a.y >= b.y &&
+          (a.x + a.width) <= (b.x + b.width) && (a.y + a.height) <= (b.y + b.height),
+        carrier: b, overlay: a,
+      };
+    })();
+  } catch (e) { out.error = String(e && e.message || e); }
+  return out;
 });
 
 
