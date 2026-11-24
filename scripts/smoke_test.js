@@ -673,6 +673,32 @@ t('v1.13.5: 浮层专项自测脚本存在且覆盖定位/层级/IPC 三项', ()
   if (!/live-overlay-action/.test(s)) throw new Error('自测未校验 IPC 通路');
 });
 
+t('v1.13.6: 证书过期/自签名的站走白名单放宽校验，其余仍严格校验', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  if (!/const INSECURE_CERT_HOSTS/.test(main)) throw new Error('缺 INSECURE_CERT_HOSTS 白名单');
+  if (!/api\.guangsuapi\.com/.test(main)) throw new Error('白名单缺光速影视域名');
+  if (!/www\.huyaapi\.com/.test(main)) throw new Error('白名单缺虎牙域名');
+  // 必须按域名精确匹配，不能全局关闭校验
+  if (!/function isInsecureCertHost\(/.test(main)) throw new Error('缺 isInsecureCertHost 判定函数');
+  if (!/rejectUnauthorized\s*=\s*false/.test(main)) throw new Error('未设置 rejectUnauthorized=false');
+  // 只能在白名单命中时才放宽
+  const seg = main.slice(main.indexOf('function httpGet('), main.indexOf('function httpGet(') + 2500);
+  if (!/isInsecureCertHost\(url\.hostname\)/.test(seg)) throw new Error('放宽判定未挂在 httpGet 内');
+  if (!/mod === https/.test(seg)) throw new Error('放宽未限定 https');
+});
+t('v1.13.6: okhttp/3.15 归一化为浏览器 UA（虎牙在该 UA 下会超时）', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  if (!/okhttp\/3\.15/.test(main)) throw new Error('未识别 okhttp/3.15');
+  if (!/DEFAULT_UA/.test(main)) throw new Error('未归一化到 DEFAULT_UA');
+  const seg = main.slice(main.indexOf('function httpGet('), main.indexOf('function httpGet(') + 2500);
+  if (!/headers\['User-Agent'\]\s*=\s*DEFAULT_UA/.test(seg)) throw new Error('httpGet 内未做 UA 归一化');
+});
+t('v1.13.6: 站点连通性自测脚本存在', () => {
+  for (const f of ['tools/net_probe.js', 'tools/net_stat2.js']) {
+    if (!fs.existsSync(path.join(ROOT, f))) throw new Error('缺 ' + f + ' 站点连通性自测');
+  }
+});
+
 chain.then(() => {
   console.log(results.map((x) => x[0] + '  ' + x[1] + (x[2] ? '  -> ' + x[2] : '')).join('\n'));
   const fail = results.filter((x) => x[0] === 'FAIL').length;

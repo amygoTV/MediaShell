@@ -4,6 +4,14 @@
 
 ## 版本
 
+### v1.13.6
+- **修复「光速影视 / 虎牙采集」在应用里全是空的**：实测这两个站的服务端证书是**自签名且已过期**（subject/issuer 均为 `C=cn,ST=sh,...,CN=sh,emailAddress=sh@sh.com`，有效期 2024-04-29 ~ 2025-04-29，已过期约 19 个月）。任何严格校验的客户端都会被拒 —— Node `https` 报 `certificate has expired`、Electron `net` 报 `net::ERR_CERT_AUTHORITY_INVALID`；而 curl/openssl 有时命中 Cloudflare 边缘节点的正规证书，所以「浏览器能开、壳里是空的」。**数据其实还在**（光速 total=119106、虎牙 total=118031）。处理：按域名白名单 `INSECURE_CERT_HOSTS` 跳过证书校验，其余域名仍严格校验，不整体削弱安全性。
+- **顺带修掉 UA 问题**：全项目 8 处都用 `okhttp/3.15` 覆盖了默认浏览器 UA，而**虎牙在该 UA 下直接超时**（Chrome UA 才返回 JSON）。现在在 `httpGet` 里把 `okhttp/3.15` 视为「未指定」统一回落到浏览器 UA，一处改动全局生效。
+- **补安全黑名单**：实测虎牙域名被劫持时会 302 跳博彩落地页（测到 `iiwbo32.qjxns.com`、`133251.online` 两种）。原黑名单不含这些域名会漏过 → 显式加入 `qjxns.com`；`online` 顶级域原规则已能拦截。跳转被拦后提示「已被阻止」，不会真跳过去。
+- 实测修复后 **7/7 站点全部正常**：光速 119106、虎牙 118031、红牛 118515、量子 165113、闪电 126016、淘片 list=30。
+- 新增 `tools/net_probe.js`（单站连通性）与 `tools/net_stat2.js`（多站成功率统计），用真实 Electron `net` 模块测，与应用链路一致。
+- `smoke_test.js` 新增 3 条断言，共 **52/52** 通过。
+
 ### v1.13.5
 - **直播「全屏 / 小窗」按钮浮到画面右下角**：新增独立置顶浮层窗口（`overlay.html` + 主进程 `ensureOverlay/syncOverlayBounds/showOverlay`），按钮半透明贴在直播画面的右下角。因为承载窗口尺寸恰好等于播放区矩形，区内 DOM 必然被原生 mpv 子窗口盖住（v1.13.1 的坑），纯 DOM 方案做不到「浮在画面上」，必须另开浮层窗口。浮层 `parent` 到主窗口（不浮到别的应用上）+ `alwaysOnTop('screen-float')`（层级高于承载窗口）。播放时显示、停播/进小窗时隐藏、退出时显式销毁（否则 `window-all-closed` 不触发 → 僵尸进程）。区外那份工具栏降级为浮层创建失败时的兜底。
 - 浮层位置随播放区几何变化同步；主进程移动/缩放时一起跟随。

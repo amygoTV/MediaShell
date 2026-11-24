@@ -444,6 +444,10 @@ const BLOCKED_REDIRECT = [
   /683469\.online/i,
   /\.(?:online|top|vip|xyz|shop|club)\b/i,
   /(?:casino|bet|sportsbook|poker|slots|sexy|porn|xxx|av)\b/i,
+  // v1.13.6：实测虎牙采集（www.huyaapi.com）偶发 302 跳到博彩落地页
+  // https://iiwbo32.qjxns.com/index.html?channelCode=... （采集域名被转让/劫持）。
+  // 该域名不含上面任何关键词，会漏过 → 显式加入。
+  /qjxns\.com/i,
 ];
 
 function isBlockedUrl(u) {
@@ -464,6 +468,24 @@ function isBlockedUrl(u) {
 //  3) 加上 gzip 解压与浏览器 UA，减小传输量并绕过部分站点的 UA 拦截。
 //  4) 重定向目标做黑名单校验，防止跟随到博彩/风险站点。
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// v1.13.6：证书放宽白名单。
+// 实测（2026-11-24）：光速影视（api.guangsuapi.com）与虎牙采集/HLS（www.huyaapi.com）
+// 服务端证书是**自签名且已过期**：subject/issuer 均为 C=cn,ST=sh,...,CN=sh,emailAddress=sh@sh.com，
+// 有效期 2024-04-29 ~ 2025-04-29（已过期约 19 个月）。任何严格校验的客户端都会拒绝：
+//   · Node https 模块 → "certificate has expired"（应用真实链路）
+//   · Electron net 模块 → net::ERR_CERT_AUTHORITY_INVALID
+//   而 curl/openssl 有时能拿到 Cloudflare 边缘节点的正规证书（Google Trust Services），
+//   所以「浏览器能开、壳里是空的」—— 实测两站数据仍在（total=119106 / 118031）。
+// 处理：仅对下面白名单域名跳过证书校验；其它域名一律严格校验，避免整体削弱安全性。
+const INSECURE_CERT_HOSTS = [
+  'api.guangsuapi.com',   // 光速影视 / 短剧点播 / 赛事点播
+  'www.huyaapi.com',      // 虎牙采集 / 虎牙HLS / 少儿动漫点播
+];
+function isInsecureCertHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return INSECURE_CERT_HOSTS.some((d) => h === d || h.endsWith('.' + d));
+}
 
 function httpGet(rawUrl, headers, timeout, deadline, depth) {
   return new Promise((resolve, reject) => {
@@ -486,6 +508,20 @@ function httpGet(rawUrl, headers, timeout, deadline, depth) {
         'Connection': 'close',
       }, headers || {}),
     };
+    // v1.13.6：UA 归一化。
+    // 采集站对 UA 敏感：实测虎牙（www.huyaapi.com）在 okhttp/3.15 下**直接超时**，
+    // 必须用浏览器 UA 才返回 JSON（total=118031）；光速影视两者皆可。
+    // 历史代码全项目都用 'okhttp/3.15' 覆盖默认 Chrome UA（影视仓沿用习惯），
+    // 这里把 okhttp/3.15 视为「未指定」，统一回落到 DEFAULT_UA（Chrome），
+    // 一处改动全局生效，不必逐个调用点改。
+    if (String(opts.headers['User-Agent'] || '').toLowerCase() === 'okhttp/3.15') {
+      opts.headers['User-Agent'] = DEFAULT_UA;
+    }
+    // v1.13.6：白名单域名跳过证书校验（自签名 + 已过期，见上方注释）
+    if (mod === https && isInsecureCertHost(url.hostname)) {
+      opts.rejectUnauthorized = false;
+      opts.checkServerIdentity = () => undefined;
+    }
     let gotHeaders = false;
     const req = mod.request(opts, (res) => {
       gotHeaders = true;
